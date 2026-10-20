@@ -29,3 +29,11 @@ def test_bad_values_are_ignored_or_clamped(tmp_path):
     assert s.latitude == 12.0
     assert s.muted is False
     assert s.location_mode == "auto"  # manual with no place falls back
+
+
+def test_start_fullscreen_is_off_by_default_and_remembered(tmp_path):
+    path = tmp_path / "settings.json"
+    store = SettingsStore(path)
+    assert store.settings.start_fullscreen is False
+    store.update(start_fullscreen=True)
+    assert SettingsStore(path).settings.start_fullscreen is True

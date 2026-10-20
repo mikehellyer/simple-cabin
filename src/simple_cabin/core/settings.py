@@ -34,6 +34,8 @@ class Settings:
     auto_switch_views: bool = True
     # Stop the screensaver, screen blanking and lock while the cabin is open.
     keep_awake: bool = True
+    # Open straight into full screen (e.g. for a Raspberry Pi cabin display).
+    start_fullscreen: bool = False
     # Halloween, Christmas, Easter and New Year decorations, in season.
     decorations: bool = True
     # "auto" picks "light" on a Raspberry Pi: drawn at lower resolution and

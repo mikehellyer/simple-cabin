@@ -65,7 +65,7 @@ def main() -> int:
     app.setApplicationName("Simple-Cabin")
     app.setDesktopFileName("simple-cabin")
     window = MainWindow()
-    window.show()
+    window.show_at_start(fullscreen="--fullscreen" in sys.argv)
     code = app.exec()
     log_event(f"event loop finished (code {code})")
     return code

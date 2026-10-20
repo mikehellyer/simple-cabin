@@ -28,6 +28,9 @@ the next 12 hours and the week ahead.
 | S | Settings: location, units, volumes, quarter chimes, view timings |
 | Right-click | All of the above as a menu |
 
+To open straight into full screen, tick **Start in full screen** in
+Settings → Views, or run `simple-cabin --fullscreen`.
+
 ## Seasonal decorations
 
 The cabin dresses up for the time of year: **Halloween** (17–31 October:

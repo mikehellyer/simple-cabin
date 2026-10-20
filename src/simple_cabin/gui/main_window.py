@@ -138,6 +138,14 @@ class MainWindow(QMainWindow):
         if self.isFullScreen():
             self._toggle_full_screen()
 
+    def show_at_start(self, fullscreen: bool = False) -> None:
+        """Show the window, full screen if asked to (here, or in Settings)."""
+        if fullscreen or self._store.settings.start_fullscreen:
+            self.showFullScreen()
+        else:
+            self.show()
+        self._act_full.setChecked(self.isFullScreen())
+
     def _toggle_full_screen(self) -> None:
         if self.isFullScreen():
             self.showNormal()
