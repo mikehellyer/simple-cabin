@@ -122,11 +122,7 @@ class InsideScene:
 
         # 2. the room (cached), with holes where the glass is
         dpr = p.device().devicePixelRatioF() if p.device() else 1.0
-        key = (int(target.width()), int(target.height()), dpr, round(self.outside.moon_phase, 3))
-        if key != self._cache_key:
-            self._cache_key = key
-            self._cache = self._render_room(target, s, ox - target.x(), oy - target.y(), dpr)
-        p.drawImage(target.topLeft(), self._cache)
+        p.drawImage(target.topLeft(), self.prerender(target, dpr))
 
         # 3. things that move
         p.save()
@@ -144,6 +140,24 @@ class InsideScene:
         # 4. light and shade
         self._paint_lighting(p, target, s, ox, oy)
         p.restore()
+
+    def prerender(self, target: QRectF, dpr: float) -> QImage:
+        """The room's cached image for this size, rendering it if need be
+        (safe to call from a background thread while nothing else paints)."""
+        key = (int(target.width()), int(target.height()), dpr, round(self.outside.moon_phase, 3))
+        if key != self._cache_key:
+            s = fit_scale(target)
+            ox = (target.width() - W * s) / 2
+            oy = (target.height() - H * s) / 2
+            self._cache = self._render_room(target, s, ox, oy, dpr)
+            self._cache_key = key
+        return self._cache
+
+    def prepare_window_view(self, target: QRectF, dpr: float) -> None:
+        """Render the view through the windows now (for the loading screen)."""
+        s = fit_scale(target)
+        view = QRectF(WINDOW.x() * s, WINDOW.y() * s, WINDOW.width() * s, WINDOW.height() * s)
+        self.outside._layers(view, WINDOW_VIEW, False, dpr, wait=True)
 
     def _render_room(self, target: QRectF, s: float, ox: float, oy: float, dpr: float) -> QImage:
         img = QImage(int(target.width() * dpr), int(target.height() * dpr), QImage.Format_ARGB32_Premultiplied)

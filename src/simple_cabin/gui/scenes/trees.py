@@ -5,7 +5,7 @@ import math
 import random
 
 from PySide6.QtCore import QPointF, QRectF, Qt
-from PySide6.QtGui import QColor, QPainter, QPainterPath, QPen
+from PySide6.QtGui import QBrush, QColor, QPainter, QPainterPath, QPen
 
 from simple_cabin.gui import textures as tx
 from simple_cabin.gui.paint import hgrad, radial, rgb, scaled
@@ -58,6 +58,8 @@ def draw_ponderosa(p: QPainter, x: float, base: float, height: float, trunk_w: f
     n = max(4, int(crown_len / (22 if detail else 26)))
     dark, mid = scaled(crown, 0.7), crown
     hi = QColor(min(255, int(crown.red() * 1.45 + 6)), min(255, int(crown.green() * 1.35 + 8)), min(255, int(crown.blue() * 1.2 + 4)))
+    # one brush for every clump, in the clump's own unit space (see _tuft)
+    shaded = QBrush(radial(-0.2, -0.6, 1.3, (0, hi), (0.5, mid), (1, dark)))
     clusters = []
     for i in range(n + 1):
         f = i / n  # 0 at the top
@@ -84,27 +86,42 @@ def draw_ponderosa(p: QPainter, x: float, base: float, height: float, trunk_w: f
             tx_ = cx + rng.uniform(-size * 0.7, size * 0.7)
             ty_ = cy + rng.uniform(-size * 0.35, size * 0.25)
             rx, ry = size * rng.uniform(0.5, 0.8), size * rng.uniform(0.28, 0.42)
-            if detail:
-                p.setBrush(radial(tx_ - rx * 0.2, ty_ - ry * 0.6, rx * 1.3, (0, hi), (0.5, mid), (1, dark)))
-            else:
-                p.setBrush(mid if k else dark)
-            _tuft(p, tx_, ty_, rx, ry, rng)
+            _tuft(p, tx_, ty_, rx, ry, rng.randrange(len(_TUFTS)), shaded if detail else (mid if k else dark))
             if snow and rng.random() < 0.45:
                 p.setBrush(rgb(236, 240, 246, 190))
                 p.drawEllipse(QPointF(tx_ + rx * 0.1, ty_ - ry * 0.55), rx * 0.55, ry * 0.28)
 
 
-def _tuft(p: QPainter, cx: float, cy: float, rx: float, ry: float, rng: random.Random) -> None:
-    """A ragged clump of needles: an ellipse with a spiky edge."""
-    path = QPainterPath()
-    spikes = 14
-    for i in range(spikes * 2):
-        a = i / (spikes * 2) * 2 * math.pi
-        r = 1.0 if i % 2 == 0 else rng.uniform(0.7, 0.85)
-        pt = QPointF(cx + math.cos(a) * rx * r, cy + math.sin(a) * ry * r * (1.15 if math.sin(a) > 0 else 1.0))
-        path.moveTo(pt) if i == 0 else path.lineTo(pt)
-    path.closeSubpath()
-    p.drawPath(path)
+def _make_tufts(count: int = 16) -> list[QPainterPath]:
+    """A few ragged clumps of needles (ellipses with spiky edges) in unit
+    size, made once: the forest has thousands of clumps, and building each
+    outline afresh in Python was most of the time it took to draw."""
+    shapes = []
+    for k in range(count):
+        rng = random.Random(900 + k)
+        path = QPainterPath()
+        spikes = 14
+        for i in range(spikes * 2):
+            a = i / (spikes * 2) * 2 * math.pi
+            r = 1.0 if i % 2 == 0 else rng.uniform(0.7, 0.85)
+            pt = QPointF(math.cos(a) * r, math.sin(a) * r * (1.15 if math.sin(a) > 0 else 1.0))
+            path.moveTo(pt) if i == 0 else path.lineTo(pt)
+        path.closeSubpath()
+        shapes.append(path)
+    return shapes
+
+
+_TUFTS = _make_tufts()
+
+
+def _tuft(p: QPainter, cx: float, cy: float, rx: float, ry: float, variant: int, brush) -> None:
+    """One clump of needles, centred on (cx, cy) with radii rx, ry."""
+    p.save()
+    p.translate(cx, cy)
+    p.scale(rx, ry)
+    p.setBrush(brush)
+    p.drawPath(_TUFTS[variant])
+    p.restore()
 
 
 def draw_boulder(p: QPainter, cx: float, cy: float, rx: float, ry: float, seed: int, light: QColor, mossy: bool = False) -> None:

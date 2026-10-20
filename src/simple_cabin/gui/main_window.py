@@ -19,6 +19,7 @@ from simple_cabin.core import weather as wx
 from simple_cabin.core.self_update import download_asset, find_asset_for_this_platform, launch_installer
 from simple_cabin.core.settings import SettingsStore
 from simple_cabin.core.updater import API_TIMEOUT_SECONDS, check_for_update
+from simple_cabin.gui import textures
 from simple_cabin.gui.audio import AudioEngine
 from simple_cabin.gui.settings_dialog import SettingsDialog
 from simple_cabin.gui.stage import INSIDE, OUTSIDE, WEATHER, Stage
@@ -47,6 +48,7 @@ class MainWindow(QMainWindow):
         self._runner = BackgroundRunner(self)
         self._pending_update = None
         cache = Path(user_cache_dir("Simple-Cabin"))
+        textures.set_cache_dir(cache / "textures")
         self._forecast_path = cache / "forecast.json"
         self._forecast: Optional[wx.Forecast] = wx.load_forecast(self._forecast_path)
         self._location: Optional[wx.Location] = None

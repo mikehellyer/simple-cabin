@@ -2,6 +2,7 @@
 screen, and crossfades between them."""
 from __future__ import annotations
 
+import threading
 import time
 from datetime import datetime
 from typing import Optional
@@ -12,7 +13,8 @@ from PySide6.QtWidgets import QWidget
 
 from simple_cabin.core import weather as wx
 from simple_cabin.core.sky import Light
-from simple_cabin.gui.paint import rgb
+from simple_cabin.gui.paint import radial, rgb
+from simple_cabin.gui.scenes.fire import Fire
 from simple_cabin.gui.scenes.icons import draw_icon
 from simple_cabin.gui.scenes.inside import InsideScene, fit_scale
 from simple_cabin.gui.scenes.outside import OutsideScene
@@ -57,6 +59,13 @@ class Stage(QWidget):
         self._hint_left = HINT_SECONDS
         self._idle = 0.0
         self.temperature_unit = "C"
+
+        # Until the room has been built (textures and all — a couple of
+        # seconds the very first time), show a "lighting the fire" screen.
+        self._loading = True
+        self._loader: Optional[threading.Thread] = None
+        self._loaded = threading.Event()
+        self._loading_fire = Fire(0, 0, 150)
 
         self._last = time.monotonic()
         self._timer = QTimer(self)
@@ -109,6 +118,9 @@ class Stage(QWidget):
         now = time.monotonic()
         dt = min(0.1, now - self._last)
         self._last = now
+        if self._loading:
+            self._tick_loading(dt)
+            return
         self.outside.step(dt)
         self.inside.step(dt)
         if self.outside.thunder_pending:
@@ -133,6 +145,49 @@ class Stage(QWidget):
             self.setCursor(Qt.BlankCursor)
         self.update()
 
+    def _tick_loading(self, dt: float) -> None:
+        self._loading_fire.step(dt)
+        if self._loader is None and self.isVisible() and self.width() > 0:
+            rect, dpr = QRectF(self.rect()), self.devicePixelRatioF()
+
+            def build() -> None:
+                try:
+                    self.inside.prerender(rect, dpr)
+                    self.inside.prepare_window_view(rect, dpr)
+                finally:
+                    self._loaded.set()
+
+            self._loader = threading.Thread(target=build, daemon=True)
+            self._loader.start()
+        if self._loaded.is_set():
+            self._fade_from = self.grab()  # the loading screen, to fade from
+            self._fade_left = FADE_SECONDS
+            self._loading = False
+            self._hint_left = HINT_SECONDS
+        self.update()
+
+    def _paint_loading(self, p: QPainter, rect: QRectF) -> None:
+        p.fillRect(rect, rgb(14, 9, 7))
+        c = rect.center()
+        size = min(rect.width(), rect.height())
+        p.setRenderHint(QPainter.Antialiasing)
+        p.setPen(Qt.NoPen)
+        f = self._loading_fire.flicker()
+        p.setBrush(radial(c.x(), c.y(), size * 0.6, (0, rgb(120, 52, 18, 160 * f)), (0.5, rgb(60, 24, 10, 60)), (1, rgb(0, 0, 0, 0))))
+        p.drawEllipse(c, size * 0.6, size * 0.6)
+        p.save()
+        k = size / 900
+        p.translate(c.x(), c.y() + size * 0.06)
+        p.scale(k * 0.8, k * 0.8)
+        self._loading_fire.paint(p)
+        p.restore()
+        font = QFont("serif")
+        font.setPixelSize(max(14, int(size * 0.045)))
+        font.setItalic(True)
+        p.setFont(font)
+        p.setPen(rgb(255, 214, 160, 230))
+        p.drawText(QRectF(rect.left(), c.y() + size * 0.12, rect.width(), size * 0.08), Qt.AlignCenter, "Lighting the fire…")
+
     def mouseMoveEvent(self, event) -> None:
         self._idle = 0.0
         if self.cursor().shape() == Qt.BlankCursor:
@@ -151,6 +206,10 @@ class Stage(QWidget):
         p = QPainter(self)
         p.setRenderHint(QPainter.SmoothPixmapTransform)
         rect = QRectF(self.rect())
+        if self._loading:
+            self._paint_loading(p, rect)
+            p.end()
+            return
         now_seconds = time.time()
         now = datetime.fromtimestamp(now_seconds)
         if self.mode == INSIDE:

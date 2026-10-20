@@ -1,16 +1,76 @@
 """Procedural textures: wood, stone, burr veneer, bark, woven jute and knit.
 
-Made with numpy the first time they're asked for, then kept for the rest of
-the run. Each is a QImage the scenes clip to a shape and shade on top of.
+Made with numpy the first time they're ever asked for, then kept: in
+memory for the rest of the run, and as PNGs in the cache folder (once
+set_cache_dir has been called) so later launches just load them. Each is a
+QImage the scenes clip to a shape and shade on top of. Bump TEXTURE_VERSION
+after changing how any texture looks, so old files get remade.
 """
 from __future__ import annotations
 
+import functools
+import hashlib
 import random
-from functools import lru_cache
+import shutil
+import threading
+from pathlib import Path
 
 import numpy as np
 from PySide6.QtCore import QPointF, QRectF, Qt
 from PySide6.QtGui import QColor, QImage, QPainter, QPainterPath
+
+TEXTURE_VERSION = 1
+_cache_dir: Path | None = None
+_memory: dict = {}
+_lock = threading.Lock()
+
+
+def set_cache_dir(directory: Path) -> None:
+    """Keep generated textures as files here (and drop older versions')."""
+    global _cache_dir
+    _cache_dir = directory / f"v{TEXTURE_VERSION}"
+    try:
+        _cache_dir.mkdir(parents=True, exist_ok=True)
+        for old in directory.glob("v*"):
+            if old.is_dir() and old != _cache_dir:
+                shutil.rmtree(old, ignore_errors=True)
+    except OSError:
+        _cache_dir = None
+
+
+def cached(fn):
+    """Remember a texture in memory and on disk, keyed by its arguments."""
+
+    @functools.wraps(fn)
+    def wrapper(*args, **kwargs):
+        key = (fn.__name__, args, tuple(sorted(kwargs.items())))
+        with _lock:
+            img = _memory.get(key)
+        if img is not None:
+            return img
+        path = None
+        if _cache_dir is not None:
+            digest = hashlib.sha1(repr(key).encode()).hexdigest()[:20]
+            path = _cache_dir / f"{fn.__name__}-{digest}.png"
+            if path.exists():
+                loaded = QImage(str(path))
+                if not loaded.isNull():
+                    img = loaded.convertToFormat(QImage.Format_ARGB32_Premultiplied)
+        if img is None:
+            img = fn(*args, **kwargs)
+            if path is not None:
+                tmp = path.with_suffix(".tmp.png")
+                if img.save(str(tmp), "PNG", 90):  # light compression: quick to save and load
+                    try:
+                        tmp.replace(path)
+                    except OSError:
+                        pass
+        with _lock:
+            _memory[key] = img
+        return img
+
+    return wrapper
+
 
 # --- noise
 
@@ -84,7 +144,7 @@ PALETTES = {"pine": PINE, "oak": OAK, "walnut": WALNUT, "weathered": WEATHERED, 
 # --- wood
 
 
-@lru_cache(maxsize=None)
+@cached
 def wood(w: int, h: int, plank: int = 60, horizontal: bool = True, palette: str = "pine", seed: int = 1,
          seams: bool = True, rough: float = 0.0) -> QImage:
     """Wooden boards: grain running along each board, growth-ring figure,
@@ -131,7 +191,7 @@ def wood(w: int, h: int, plank: int = 60, horizontal: bool = True, palette: str 
     return to_qimage(rgb)
 
 
-@lru_cache(maxsize=None)
+@cached
 def burl(w: int, h: int, seed: int = 3) -> QImage:
     """Burr walnut / flame veneer for the clock case: swirling figure."""
     ys, xs = np.mgrid[0:h, 0:w].astype(float)
@@ -144,7 +204,7 @@ def burl(w: int, h: int, seed: int = 3) -> QImage:
     return to_qimage(colour_map(figure, WALNUT))
 
 
-@lru_cache(maxsize=None)
+@cached
 def bark(w: int, h: int, seed: int = 5) -> QImage:
     """Pine bark: dark furrows between long reddish-grey plates."""
     plates = fbm(h, w, 26, 7, seed, 4)
@@ -155,7 +215,7 @@ def bark(w: int, h: int, seed: int = 5) -> QImage:
     return to_qimage(colour_map(t, stops))
 
 
-@lru_cache(maxsize=None)
+@cached
 def jute(w: int, h: int, seed: int = 7) -> QImage:
     """A chunky braided jute rug: rows of plaits leaning alternately."""
     ys, xs = np.mgrid[0:h, 0:w].astype(float)
@@ -171,7 +231,7 @@ def jute(w: int, h: int, seed: int = 7) -> QImage:
     return to_qimage(colour_map(t, stops))
 
 
-@lru_cache(maxsize=None)
+@cached
 def knit(w: int, h: int, base: tuple[int, int, int] = (150, 60, 36), seed: int = 8) -> QImage:
     """Chunky cable knit (the throw on the sofa)."""
     ys, xs = np.mgrid[0:h, 0:w].astype(float)
@@ -187,7 +247,7 @@ def knit(w: int, h: int, base: tuple[int, int, int] = (150, 60, 36), seed: int =
     return to_qimage(colour_map(t, stops))
 
 
-@lru_cache(maxsize=None)
+@cached
 def fabric(w: int, h: int, base: tuple[int, int, int] = (226, 216, 196), seed: int = 9) -> QImage:
     """Fine woven upholstery (linen)."""
     ys, xs = np.mgrid[0:h, 0:w].astype(float)
@@ -198,7 +258,7 @@ def fabric(w: int, h: int, base: tuple[int, int, int] = (226, 216, 196), seed: i
     return to_qimage(rgb)
 
 
-@lru_cache(maxsize=None)
+@cached
 def stone_wall(w: int, h: int, seed: int = 11, size: float = 1.0) -> QImage:
     """Tightly stacked rough fieldstone: blocky stones in rough courses,
     greys and tans, thin dark joints, each stone lit from above."""
@@ -258,7 +318,7 @@ def stone_wall(w: int, h: int, seed: int = 11, size: float = 1.0) -> QImage:
     return to_qimage(arr[..., :3])
 
 
-@lru_cache(maxsize=None)
+@cached
 def forest_floor(w: int, h: int, seed: int = 13) -> QImage:
     """Pine needles, earth and moss under the trees."""
     ys, xs = np.mgrid[0:h, 0:w].astype(float)
