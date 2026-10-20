@@ -16,6 +16,9 @@ from PySide6.QtWidgets import QMainWindow, QMenu, QMessageBox, QVBoxLayout, QWid
 from simple_cabin import __version__
 from simple_cabin.core import chimes, sky
 from simple_cabin.core import weather as wx
+from simple_cabin.core.diagnostics import log_event
+from simple_cabin.core.keep_awake import KeepAwake
+from simple_cabin.core.platform_info import is_raspberry_pi
 from simple_cabin.core.self_update import download_asset, find_asset_for_this_platform, launch_installer
 from simple_cabin.core.settings import SettingsStore
 from simple_cabin.core.updater import API_TIMEOUT_SECONDS, check_for_update
@@ -46,6 +49,7 @@ class MainWindow(QMainWindow):
 
         self._store = SettingsStore()
         self._runner = BackgroundRunner(self)
+        self._keep_awake = KeepAwake()
         self._pending_update = None
         cache = Path(user_cache_dir("Simple-Cabin"))
         textures.set_cache_dir(cache / "textures")
@@ -177,6 +181,13 @@ class MainWindow(QMainWindow):
         self._audio.set_clock_voice(s.clock_voice)
         self._act_mute.setChecked(s.muted)
         self._stage.auto_switch = s.auto_switch_views
+        light = s.graphics == "light" or (s.graphics == "auto" and is_raspberry_pi())
+        self._stage.set_light_graphics(light)
+        if s.keep_awake and not self._keep_awake.active:
+            log_event(f"keeping the screen awake via {self._keep_awake.start() or 'nothing (not supported here)'}")
+        elif not s.keep_awake and self._keep_awake.active:
+            self._keep_awake.stop()
+            log_event("no longer keeping the screen awake")
         self._stage.inside_seconds = s.inside_minutes * 60
         self._stage.outside_seconds = s.outside_seconds
         self._stage.temperature_unit = s.temperature_unit
@@ -327,6 +338,7 @@ class MainWindow(QMainWindow):
         self._update_banner.set_busy(False)
 
     def closeEvent(self, event) -> None:
+        self._keep_awake.stop()
         self._store.save()
         self._runner.shutdown(BACKGROUND_JOIN_TIMEOUT_MS)
         super().closeEvent(event)

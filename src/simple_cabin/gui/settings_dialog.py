@@ -129,8 +129,16 @@ class SettingsDialog(QDialog):
         self._outside_seconds.setSuffix(" seconds")
         self._outside_seconds.setValue(settings.outside_seconds)
         vl.addRow("", self._auto_switch)
+        self._keep_awake = QCheckBox("Keep the screen awake (no screensaver or lock) while open")
+        self._keep_awake.setChecked(settings.keep_awake)
+        self._graphics = QComboBox()
+        for label, key in (("Automatic", "auto"), ("Full", "full"), ("Light (for a Raspberry Pi)", "light")):
+            self._graphics.addItem(label, key)
+        self._graphics.setCurrentIndex(max(0, self._graphics.findData(settings.graphics)))
         vl.addRow("Stay inside for", self._inside_minutes)
         vl.addRow("Stay outside for", self._outside_seconds)
+        vl.addRow("", self._keep_awake)
+        vl.addRow("Graphics", self._graphics)
         layout.addWidget(views)
 
         buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
@@ -185,6 +193,8 @@ class SettingsDialog(QDialog):
             "quarter_chimes": self._quarters.isChecked(),
             "clock_voice": self._voice.currentData(),
             "auto_switch_views": self._auto_switch.isChecked(),
+            "keep_awake": self._keep_awake.isChecked(),
+            "graphics": self._graphics.currentData(),
             "inside_minutes": self._inside_minutes.value(),
             "outside_seconds": self._outside_seconds.value(),
         }

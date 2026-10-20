@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Optional
 
 from simple_cabin.core.http import SSL_CONTEXT
+from simple_cabin.core.platform_info import debian_arch
 
 DOWNLOAD_TIMEOUT_SECONDS = 30
 
@@ -26,9 +27,16 @@ def _installer_suffix() -> str:
     return ".deb"
 
 
-def find_asset_for_this_platform(assets: list[tuple[str, str]]) -> Optional[str]:
-    """Return the download URL of the release asset built for this OS, if any."""
+def find_asset_for_this_platform(assets: list[tuple[str, str]], arch: Optional[str] = None) -> Optional[str]:
+    """Return the download URL of the release asset built for this OS (and,
+    for Linux, this processor: an Intel/AMD PC or a Raspberry Pi), if any."""
     suffix = _installer_suffix()
+    if suffix == ".deb":
+        wanted = f"_{arch or debian_arch()}.deb"
+        for name, download_url in assets:
+            if name.lower().endswith(wanted):
+                return download_url
+        return None
     for name, download_url in assets:
         if name.lower().endswith(suffix):
             return download_url

@@ -8,7 +8,7 @@ from datetime import datetime
 from typing import Optional
 
 from PySide6.QtCore import QPointF, QRectF, Qt, QTimer, Signal
-from PySide6.QtGui import QFont, QPainter, QPixmap
+from PySide6.QtGui import QFont, QImage, QPainter, QPixmap
 from PySide6.QtWidgets import QWidget
 
 from simple_cabin.core import weather as wx
@@ -22,6 +22,8 @@ from simple_cabin.gui.scenes.weather_board import WeatherBoard
 
 INSIDE, OUTSIDE, WEATHER = "inside", "outside", "weather"
 FRAME_MS = 33
+LIGHT_FRAME_MS = 50  # 20 fps in light graphics mode
+LIGHT_SCALE = 0.6  # light mode draws the scenes at this fraction of the window's size
 FADE_SECONDS = 1.4
 HINT_SECONDS = 5.0
 CURSOR_HIDE_SECONDS = 3.0
@@ -66,6 +68,8 @@ class Stage(QWidget):
         self._loader: Optional[threading.Thread] = None
         self._loaded = threading.Event()
         self._loading_fire = Fire(0, 0, 150)
+        self._light = False
+        self._buffer: Optional[QImage] = None
 
         self._last = time.monotonic()
         self._timer = QTimer(self)
@@ -95,6 +99,20 @@ class Stage(QWidget):
         self._mode_time = 0.0
         self.mode_changed.emit(mode)
         self.update()
+
+    def set_light_graphics(self, light: bool) -> None:
+        """Light graphics: the scenes are drawn smaller and scaled up, at a
+        lower frame rate, for slower machines such as a Raspberry Pi."""
+        self._light = light
+        self._buffer = None
+        self._timer.setInterval(LIGHT_FRAME_MS if light else FRAME_MS)
+
+    def _scene_target(self) -> tuple[QRectF, float]:
+        """Where the scenes are drawn: the window itself, or (light mode) a
+        smaller offscreen image."""
+        if self._light:
+            return QRectF(0, 0, max(1, int(self.width() * LIGHT_SCALE)), max(1, int(self.height() * LIGHT_SCALE))), 1.0
+        return QRectF(self.rect()), self.devicePixelRatioF()
 
     def toggle_view(self) -> None:
         self.set_mode(OUTSIDE if self.mode == INSIDE else INSIDE)
@@ -148,7 +166,7 @@ class Stage(QWidget):
     def _tick_loading(self, dt: float) -> None:
         self._loading_fire.step(dt)
         if self._loader is None and self.isVisible() and self.width() > 0:
-            rect, dpr = QRectF(self.rect()), self.devicePixelRatioF()
+            rect, dpr = self._scene_target()
 
             def build() -> None:
                 try:
@@ -212,13 +230,26 @@ class Stage(QWidget):
             return
         now_seconds = time.time()
         now = datetime.fromtimestamp(now_seconds)
-        if self.mode == INSIDE:
-            self.inside.paint(p, rect, now, now_seconds)
-            self.outside.prepare(rect, self.devicePixelRatioF())  # ready for the next step outside
-        elif self.mode == OUTSIDE:
-            self.outside.paint(p, rect)
-        else:
+        if self.mode == WEATHER:
             self.board.paint(p, rect, now)
+        else:
+            target, dpr = self._scene_target()
+            if self._light:
+                size = (int(target.width()), int(target.height()))
+                if self._buffer is None or (self._buffer.width(), self._buffer.height()) != size:
+                    self._buffer = QImage(size[0], size[1], QImage.Format_RGB32)
+                sp = QPainter(self._buffer)
+                sp.setRenderHint(QPainter.SmoothPixmapTransform)
+            else:
+                sp = p
+            if self.mode == INSIDE:
+                self.inside.paint(sp, target, now, now_seconds)
+                self.outside.prepare(target, dpr)  # ready for the next step outside
+            else:
+                self.outside.paint(sp, target)
+            if self._light:
+                sp.end()
+                p.drawImage(rect, self._buffer)
         if self.mode != WEATHER:
             self._paint_badge(p, rect)
 

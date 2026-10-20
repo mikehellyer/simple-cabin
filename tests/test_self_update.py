@@ -137,3 +137,15 @@ def test_launch_installer_windows_uses_startfile():
     # No process handle for os.startfile — main_window.py falls back to a
     # timed quit instead of waiting on a process.
     assert result is None
+
+
+def test_linux_picks_the_deb_for_this_processor():
+    assets = [
+        ("simple-cabin_0.3.0_amd64.deb", "https://dl/pc.deb"),
+        ("simple-cabin_0.3.0_arm64.deb", "https://dl/pi.deb"),
+        ("Simple-Cabin-0.3.0-macOS.dmg", "https://dl/mac.dmg"),
+    ]
+    with patch("sys.platform", "linux"):
+        assert find_asset_for_this_platform(assets, arch="arm64") == "https://dl/pi.deb"
+        assert find_asset_for_this_platform(assets, arch="amd64") == "https://dl/pc.deb"
+        assert find_asset_for_this_platform(assets[2:], arch="arm64") is None

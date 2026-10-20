@@ -13,6 +13,7 @@ dependencies = [
     "platformdirs",
     "certifi",
     "numpy",
+    "jeepney; sys_platform == 'linux'",  # D-Bus, to keep the screen awake
 ]
 
 [project.scripts]

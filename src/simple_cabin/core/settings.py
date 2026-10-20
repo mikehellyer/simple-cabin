@@ -32,6 +32,11 @@ class Settings:
 
     # Drift outside now and then, but spend most of the time indoors.
     auto_switch_views: bool = True
+    # Stop the screensaver, screen blanking and lock while the cabin is open.
+    keep_awake: bool = True
+    # "auto" picks "light" on a Raspberry Pi: drawn at lower resolution and
+    # frame rate, which a Pi can keep up with.
+    graphics: str = "auto"
     inside_minutes: int = 5
     outside_seconds: int = 40
 
@@ -41,6 +46,7 @@ _CHOICES = {
     "temperature_unit": ("C", "F"),
     "wind_unit": ("mph", "kmh"),
     "clock_voice": ("recorded", "classic", "bold", "deep"),
+    "graphics": ("auto", "full", "light"),
 }
 _RANGES = {
     "master_volume": (0, 100),

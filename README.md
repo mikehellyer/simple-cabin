@@ -27,6 +27,28 @@ the next 12 hours and the week ahead.
 | S | Settings: location, units, volumes, quarter chimes, view timings |
 | Right-click | All of the above as a menu |
 
+## Screen saver
+
+While Simple-Cabin is open it asks the system not to start the screen
+saver, blank the screen or lock: on Linux over D-Bus (freedesktop
+screensaver, the desktop portal or GNOME), on macOS with `caffeinate`, on
+Windows with `SetThreadExecutionState`. It all stops when the app closes.
+Turn it off in Settings → Views.
+
+## Raspberry Pi
+
+Each release includes `simple-cabin_X.Y.Z_arm64.deb` for **64-bit
+Raspberry Pi OS** (Bookworm or newer) on a Pi 4 or Pi 5:
+
+```bash
+sudo apt install ./simple-cabin_X.Y.Z_arm64.deb
+```
+
+On a Pi the app switches to *Light* graphics automatically (drawn at lower
+resolution and 20 fps). Settings → Views → Graphics can change that. If the
+screen still blanks, turn off *Screen Blanking* in Raspberry Pi
+Configuration → Display.
+
 ## Weather and location
 
 Weather comes from [Open-Meteo](https://open-meteo.com/) (free, no API key).

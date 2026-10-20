@@ -27,6 +27,13 @@ def self_test() -> int:
         checks["weather parsing"] = weather.condition_for(63) == weather.RAIN
     except Exception:
         checks["weather parsing"] = False
+    if sys.platform.startswith("linux"):
+        try:
+            import jeepney.io.blocking  # noqa: F401  (keeping the screen awake)
+
+            checks["keep awake"] = True
+        except Exception:
+            checks["keep awake"] = False
     try:
         import certifi  # noqa: F401
 

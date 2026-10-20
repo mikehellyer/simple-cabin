@@ -40,6 +40,7 @@ Version: $VERSION
 Section: misc
 Priority: optional
 Architecture: $ARCH
+Depends: libegl1, libxkbcommon0, libxcb-cursor0, libfontconfig1, libdbus-1-3
 Maintainer: Mike Hellyer
 Description: A cosy log cabin with a ticking grandfather clock
  A wooden cabin by a forest lake: a grandfather clock that keeps the
