@@ -155,6 +155,7 @@ class Stage(QWidget):
         now = datetime.fromtimestamp(now_seconds)
         if self.mode == INSIDE:
             self.inside.paint(p, rect, now, now_seconds)
+            self.outside.prepare(rect, self.devicePixelRatioF())  # ready for the next step outside
         elif self.mode == OUTSIDE:
             self.outside.paint(p, rect)
         else:

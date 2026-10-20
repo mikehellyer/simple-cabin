@@ -1,8 +1,11 @@
-"""Inside the cabin: log walls, the grandfather clock, a roaring stone
-fireplace, an armchair, and a window looking out over the lake.
+"""Inside the cabin, after a timber lodge's great room: honey-pine walls,
+heavy beams, the grandfather clock, a tall stone fireplace with a raised
+hearth, a wall of picture windows onto the lake, a leather armchair, a
+linen sofa, a chunky coffee table on a jute rug, and the dog asleep by the
+fire.
 
-Everything is lit by an overlay: daylight from the window during the
-day, then firelight, an oil lamp and candles as it gets dark.
+Everything is lit by an overlay: daylight from the windows during the day,
+then the fire, a floor lamp and candles as it gets dark.
 """
 from __future__ import annotations
 
@@ -11,18 +14,33 @@ import random
 from datetime import datetime
 
 from PySide6.QtCore import QPointF, QRectF, Qt
-from PySide6.QtGui import QColor, QImage, QPainter, QPainterPath, QPen
+from PySide6.QtGui import QColor, QImage, QPainter, QPainterPath, QPen, QPolygonF, QTransform
 
+from simple_cabin.gui import textures as tx
 from simple_cabin.gui.paint import H, W, alpha, hgrad, mix, poly, radial, rgb, scaled, vgrad, wobble
 from simple_cabin.gui.scenes import clock
 from simple_cabin.gui.scenes.fire import Fire
 from simple_cabin.gui.scenes.outside import WINDOW_VIEW, OutsideScene
 
-GLASS = QRectF(590, 160, 340, 310)
-FIREBOX_LEFT, FIREBOX_RIGHT, FIREBOX_TOP, FIREBOX_BOTTOM = 1120.0, 1380.0, 470.0, 690.0
-LAMP_FLAME = QPointF(535, 596)
-CANDLES = (QPointF(1062, 352), QPointF(1440, 352))
-FLOOR_Y = 700.0
+FLOOR_Y = 690.0
+BEAM_Y = 112.0  # bottom of the big tie beam under the vaulted ceiling
+
+# The picture windows: one continuous view, cut into panes by the frame.
+WINDOW = QRectF(1066, 104, 560, 500)
+PANES = [
+    QRectF(1080, 118, 160, 66), QRectF(1252, 118, 160, 66), QRectF(1424, 118, 200, 66),  # transoms
+    QRectF(1080, 198, 246, 392), QRectF(1340, 198, 284, 392),  # the two big panes
+]
+
+CHIMNEY = QRectF(470, -400, 530, FLOOR_Y + 400)
+FIREBOX = QRectF(592, 468, 286, 182)
+HEARTH_TOP = 650.0
+HEARTH_FRONT = 736.0
+
+LAMP = QPointF(1032, 356)  # centre of the floor lamp's shade
+CANDLES = (QPointF(824, 270), QPointF(862, 282))
+TABLE_CANDLE = QPointF(986, 628)
+DOG = QPointF(548, 748)  # roughly the middle of the sleeping dog
 
 
 def fit_scale(target: QRectF, width: float = W, height: float = H) -> float:
@@ -34,18 +52,14 @@ def fit_scale(target: QRectF, width: float = W, height: float = H) -> float:
 
 def firebox_path() -> QPainterPath:
     path = QPainterPath()
-    path.moveTo(FIREBOX_LEFT, FIREBOX_BOTTOM)
-    path.lineTo(FIREBOX_LEFT, 530)
-    path.quadTo((FIREBOX_LEFT + FIREBOX_RIGHT) / 2, FIREBOX_TOP - 22, FIREBOX_RIGHT, 530)
-    path.lineTo(FIREBOX_RIGHT, FIREBOX_BOTTOM)
-    path.closeSubpath()
+    path.addRect(FIREBOX)
     return path
 
 
 class InsideScene:
     def __init__(self, outside: OutsideScene):
         self.outside = outside
-        self.fire = Fire((FIREBOX_LEFT + FIREBOX_RIGHT) / 2, FIREBOX_BOTTOM - 22, 230)
+        self.fire = Fire(FIREBOX.center().x(), FIREBOX.bottom() - 16, 210)
         self.t = 0.0
         self._cache_key = None
         self._cache: QImage | None = None
@@ -60,20 +74,28 @@ class InsideScene:
 
     def _step_drops(self, dt: float) -> None:
         rain = self.outside.weather.rain
-        want = int(rain * 70)
+        want = int(rain * 110)
         rng = self._rng
-        while len(self._drops) < want:
+        g = WINDOW
+
+        def fresh() -> list[float]:
             # x, y, radius, speed (0 = clinging), age
-            self._drops.append([rng.uniform(GLASS.left(), GLASS.right()), rng.uniform(GLASS.top(), GLASS.bottom()),
-                                rng.uniform(1.5, 4), 0.0, 0.0])
+            return [rng.uniform(g.left(), g.right()), rng.uniform(g.top(), g.bottom()), rng.uniform(1.5, 4), 0.0, 0.0]
+
+        while len(self._drops) < want:
+            self._drops.append(fresh())
         del self._drops[want:]
         for d in self._drops:
             d[4] += dt
             if d[3] == 0 and d[2] > 3.2 and rng.random() < dt * 0.4:
                 d[3] = rng.uniform(25, 70)  # heavy enough to run
             d[1] += d[3] * dt
-            if d[1] > GLASS.bottom() + 5 or d[4] > 25:
-                d[:] = [rng.uniform(GLASS.left(), GLASS.right()), rng.uniform(GLASS.top(), GLASS.bottom()), rng.uniform(1.5, 4), 0.0, 0.0]
+            if d[1] > g.bottom() + 5 or d[4] > 25:
+                d[:] = fresh()
+
+    def lamp_on(self) -> bool:
+        l = self.outside.light
+        return l.daylight < 0.55 or (l.daylight < 0.8 and self.outside.weather.clouds > 0.85)
 
     # --- painting
 
@@ -88,21 +110,19 @@ class InsideScene:
 
         p.save()
         p.setClipRect(target)
-        # 1. the view through the window
-        glass_device = QRectF(ox + GLASS.x() * s, oy + GLASS.y() * s, GLASS.width() * s, GLASS.height() * s)
-        p.fillRect(glass_device, rgb(0, 0, 0))
-        self.outside.paint(p, glass_device, WINDOW_VIEW, cabin=False)
-
+        # 1. the view through the windows
+        view = QRectF(ox + WINDOW.x() * s, oy + WINDOW.y() * s, WINDOW.width() * s, WINDOW.height() * s)
+        p.fillRect(view, rgb(0, 0, 0))
+        self.outside.paint(p, view, WINDOW_VIEW, cabin=False)
         p.save()
         to_scene()
         p.setRenderHint(QPainter.Antialiasing)
         self._paint_glass(p)
         p.restore()
 
-        # 2. the room (cached), with a hole where the glass is
+        # 2. the room (cached), with holes where the glass is
         dpr = p.device().devicePixelRatioF() if p.device() else 1.0
-        key = (int(target.width()), int(target.height()), dpr, round(self.outside.moon_phase, 3),
-               self.outside.weather.snow_on_ground)
+        key = (int(target.width()), int(target.height()), dpr, round(self.outside.moon_phase, 3))
         if key != self._cache_key:
             self._cache_key = key
             self._cache = self._render_room(target, s, ox - target.x(), oy - target.y(), dpr)
@@ -117,6 +137,7 @@ class InsideScene:
         self.fire.paint(p)
         p.restore()
         self._paint_small_flames(p)
+        self._paint_dog(p)
         clock.paint_moving(p, now, now_seconds, glow=self.fire.flicker() * (1 - self.outside.light.daylight * 0.8))
         p.restore()
 
@@ -130,399 +151,504 @@ class InsideScene:
         img.fill(Qt.transparent)
         p = QPainter(img)
         p.setRenderHint(QPainter.Antialiasing)
+        p.setRenderHint(QPainter.SmoothPixmapTransform)
         p.translate(ox, oy)
         p.scale(s, s)
         self._paint_walls(p)
         p.setCompositionMode(QPainter.CompositionMode_Clear)
-        p.fillRect(GLASS, Qt.transparent)
+        for pane in PANES:
+            p.fillRect(pane, Qt.transparent)
         p.setCompositionMode(QPainter.CompositionMode_SourceOver)
         self._paint_window_frame(p)
+        self._paint_floor(p)
         self._paint_fireplace(p)
+        self._paint_lamp(p)
+        self._paint_armchair(p)
         self._paint_rug(p)
-        self._paint_chair(p)
-        self._paint_lamp_table(p)
-        self._paint_log_basket(p)
+        self._paint_log_bucket(p)
+        self._paint_coffee_table(p)
+        self._paint_sofa(p)
         clock.paint_case(p, self.outside.moon_phase)
         p.end()
         return img
 
-    def _paint_walls(self, p: QPainter) -> None:
-        rng = random.Random(21)
-        p.setPen(Qt.NoPen)
-        # Log wall (extended well past the canvas for squarer windows)
-        p.fillRect(QRectF(-200, -400, W + 400, FLOOR_Y + 400), rgb(206, 186, 146))
-        y = 40.0
-        while y < FLOOR_Y:
-            h = 46.0
-            r = QRectF(-200, y + 2, W + 400, h - 4)
-            p.setBrush(vgrad(r.top(), r.bottom(), (0, rgb(176, 116, 66)), (0.3, rgb(160, 102, 56)), (0.75, rgb(130, 80, 44)), (1, rgb(92, 56, 30))))
-            p.drawRect(r)
-            p.setPen(QPen(rgb(120, 76, 42, 120), 1))
-            for _ in range(5):
-                gx = rng.uniform(-100, W + 100)
-                gy = rng.uniform(r.top() + 8, r.bottom() - 8)
-                p.drawLine(QPointF(gx, gy), QPointF(gx + rng.uniform(80, 260), gy + rng.uniform(-1, 1)))
-            p.setPen(Qt.NoPen)
-            for _ in range(3):
-                kx = rng.uniform(0, W)
-                p.setBrush(rgb(96, 58, 30, 200))
-                p.drawEllipse(QPointF(kx, r.center().y() + rng.uniform(-8, 8)), rng.uniform(4, 8), rng.uniform(3, 5))
-            y += h
-        # Ceiling beam
-        p.fillRect(QRectF(-200, -400, W + 400, 440), vgrad(-400, 40, rgb(60, 38, 24), rgb(84, 52, 32)))
-        p.fillRect(QRectF(-200, 34, W + 400, 8), rgb(50, 30, 18))
-        # Antlers above the window
-        p.setPen(QPen(rgb(226, 210, 180), 4, Qt.SolidLine, Qt.RoundCap))
-        for side in (-1, 1):
-            base = QPointF(760 + side * 10, 112)
-            path = QPainterPath(base)
-            path.cubicTo(760 + side * 40, 100, 760 + side * 70, 80, 760 + side * 80, 50)
-            p.setBrush(Qt.NoBrush)
-            p.drawPath(path)
-            for k, (tx, ty) in enumerate(((36, 92), (56, 76), (68, 62))):
-                p.drawLine(QPointF(760 + side * tx, ty), QPointF(760 + side * (tx - 6 + k * 3), ty - 22))
-        p.setPen(Qt.NoPen)
-        p.setBrush(vgrad(100, 130, rgb(120, 76, 42), rgb(80, 48, 26)))
-        p.drawEllipse(QPointF(760, 118), 24, 16)
+    # --- the room
 
-        # Floor in perspective
-        p.fillRect(QRectF(-200, FLOOR_Y, W + 400, 700), vgrad(FLOOR_Y, H, rgb(96, 60, 34), rgb(140, 92, 54)))
-        vx, vy = 800.0, 420.0
-        p.setPen(QPen(rgb(70, 42, 24), 1.6))
-        bottom = H + 400
-        k = (bottom - vy) / (FLOOR_Y - vy)
-        for i in range(-30, 31):
-            x = vx + i * 46
-            p.drawLine(QPointF(x, FLOOR_Y), QPointF(vx + (x - vx) * k, bottom))
-        # Board ends, staggered row by row
-        p.setPen(QPen(rgb(70, 42, 24, 110), 1))
-        for j, yy in enumerate((716, 738, 768, 806, 852, 910)):
-            k2 = (yy - vy) / (FLOOR_Y - vy)
-            for i in range(-30 + j % 3, 30, 3):
-                p.drawLine(QPointF(vx + i * 46 * k2, yy), QPointF(vx + (i + 1) * 46 * k2, yy))
+    def _paint_walls(self, p: QPainter) -> None:
         p.setPen(Qt.NoPen)
-        # Skirting board
-        p.fillRect(QRectF(-200, FLOOR_Y - 12, W + 400, 14), vgrad(FLOOR_Y - 12, FLOOR_Y + 2, rgb(100, 62, 34), rgb(60, 36, 20)))
+        # honey-pine plank walls (extended well past the canvas for squarer windows)
+        wall = QRectF(-200, -400, W + 400, FLOOR_Y + 400)
+        p.drawImage(wall.topLeft(), tx.wood(int(wall.width()), int(wall.height()), 40, True, "pine", 9))
+        tx.shade_rect(p, QRectF(-200, BEAM_Y, W + 400, FLOOR_Y - BEAM_Y), top=0.35, bottom=0.2)
+
+        # vaulted ceiling above the tie beam: darker boards and sloping rafters
+        ceiling = QRectF(-200, -400, W + 400, 400 + BEAM_Y)
+        p.drawImage(ceiling.topLeft(), tx.wood(int(ceiling.width()), int(ceiling.height()), 30, False, "cedar", 13))
+        p.fillRect(ceiling, rgb(30, 14, 4, 110))
+        # sloping rafters, rising away to the ridge
+        for x0 in (-60, 260, 580, 900, 1220, 1540):
+            lean = (x0 - W / 2) * 0.5
+            pts = ((x0, BEAM_Y), (x0 + 50, BEAM_Y), (x0 + 50 + lean, -300), (x0 + lean, -300))
+            p.setBrush(hgrad(x0, x0 + 50, rgb(96, 62, 36), rgb(150, 104, 64), rgb(120, 80, 46), rgb(70, 44, 24)))
+            p.drawPolygon(poly(*pts))
+            p.setBrush(rgb(0, 0, 0, 70))
+            p.drawPolygon(poly((x0 + 50, BEAM_Y), (x0 + 58, BEAM_Y), (x0 + 58 + lean, -300), (x0 + 50 + lean, -300)))
+        # the tie beam
+        beam = QRectF(-200, BEAM_Y - 44, W + 400, 48)
+        p.drawImage(beam.topLeft(), tx.wood(int(beam.width()), 48, 400, True, "weathered", 19, seams=False, rough=0.35))
+        tx.shade_rect(p, beam, top=0.0, bottom=0.45)
+        p.fillRect(QRectF(-200, BEAM_Y + 4, W + 400, 10), vgrad(BEAM_Y + 4, BEAM_Y + 14, rgb(0, 0, 0, 90), rgb(0, 0, 0, 0)))
+
+        # heavy timber post between the fireplace and the windows, with knee braces
+        post = QRectF(1010, BEAM_Y, 52, FLOOR_Y - BEAM_Y)
+        p.drawImage(post.topLeft(), tx.wood(52, int(post.height()), 200, False, "weathered", 23, seams=False, rough=0.3))
+        tx.shade_rect(p, post, left=0.25, right=0.5)
+        for side in (-1, 1):
+            brace = QPainterPath()
+            bx = post.left() if side < 0 else post.right()
+            brace.moveTo(bx, BEAM_Y + 70)
+            brace.lineTo(bx, BEAM_Y + 96)
+            brace.lineTo(bx + side * 96, BEAM_Y)
+            brace.lineTo(bx + side * 70, BEAM_Y)
+            brace.closeSubpath()
+            p.setBrush(vgrad(BEAM_Y, BEAM_Y + 96, rgb(150, 104, 64), rgb(104, 68, 40)))
+            p.drawPath(brace)
+        # skirting
+        p.fillRect(QRectF(-200, FLOOR_Y - 14, W + 400, 16), vgrad(FLOOR_Y - 14, FLOOR_Y + 2, rgb(120, 76, 40), rgb(60, 36, 18)))
 
     def _paint_window_frame(self, p: QPainter) -> None:
-        wood = rgb(112, 70, 40)
-        p.setPen(Qt.NoPen)
         frame = QPainterPath()
-        frame.addRect(GLASS.adjusted(-16, -16, 16, 16))
-        frame.addRect(GLASS)
-        p.setBrush(vgrad(GLASS.top() - 16, GLASS.bottom() + 16, scaled(wood, 1.2), wood, scaled(wood, 0.8)))
-        p.drawPath(frame)
-        # glazing bars
-        p.setBrush(scaled(wood, 0.95))
-        p.drawRect(QRectF(GLASS.center().x() - 5, GLASS.top(), 10, GLASS.height()))
-        p.drawRect(QRectF(GLASS.left(), GLASS.center().y() - 5, GLASS.width(), 10))
-        # sill, with a little potted fern
-        p.setBrush(vgrad(GLASS.bottom() + 8, GLASS.bottom() + 30, scaled(wood, 1.3), scaled(wood, 0.75)))
-        p.drawRect(QRectF(GLASS.left() - 30, GLASS.bottom() + 10, GLASS.width() + 60, 20))
-        p.setBrush(vgrad(440, 482, rgb(176, 90, 56), rgb(130, 60, 36)))
-        p.drawPolygon(poly((618, 446), (662, 446), (656, 480), (624, 480)))
-        p.setPen(QPen(rgb(60, 120, 60), 3, Qt.SolidLine, Qt.RoundCap))
-        for a in range(-60, 61, 20):
-            r = math.radians(a)
-            p.drawLine(QPointF(640, 446), QPointF(640 + math.sin(r) * 34, 446 - math.cos(r) * 30))
+        frame.setFillRule(Qt.OddEvenFill)
+        frame.addRect(WINDOW.adjusted(-14, -14, 40, 14))
+        for pane in PANES:
+            frame.addRect(pane)
+        tex = tx.wood(int(WINDOW.width()) + 60, int(WINDOW.height()) + 30, 300, False, "cedar", 29, seams=False)
+        tx.draw_textured(p, frame, tex, QPointF(0, 0))
+        # bevelled edges round each pane
+        p.setBrush(Qt.NoBrush)
+        for pane in PANES:
+            p.setPen(QPen(rgb(60, 32, 14, 180), 3))
+            p.drawLine(pane.topLeft(), pane.topRight())
+            p.drawLine(pane.topLeft(), pane.bottomLeft())
+            p.setPen(QPen(rgb(255, 220, 170, 60), 2))
+            p.drawLine(pane.bottomLeft() + QPointF(0, 1), pane.bottomRight() + QPointF(0, 1))
         p.setPen(Qt.NoPen)
+        # a deep sill
+        sill = QRectF(WINDOW.left() - 24, WINDOW.bottom() + 10, WINDOW.width() + 60, 18)
+        p.drawImage(sill.topLeft(), tx.wood(int(sill.width()), 18, 300, True, "cedar", 31, seams=False))
+        tx.shade_rect(p, sill, top=0.0, bottom=0.45)
 
-        # Curtains, on a brass rod
-        p.setBrush(vgrad(132, 140, rgb(220, 180, 90), rgb(150, 110, 40)))
-        p.drawRect(QRectF(530, 132, 460, 7))
-        for x0, x1, tie in ((532, 616, 586), (904, 988, 934)):
-            path = QPainterPath()
-            path.moveTo(x0, 138)
-            path.lineTo(x1, 138)
-            path.cubicTo(x1 - 10, 300, tie + 4, 330, x1 - 6, 560)
-            path.lineTo(x0, 560)
-            path.closeSubpath()
-            g = hgrad(x0, x1, *[(i / 8, rgb(150, 36, 32) if i % 2 else rgb(110, 24, 22)) for i in range(9)])
-            p.setBrush(g)
-            p.drawPath(path)
-            # tartan stripes
-            p.save()
-            p.setClipPath(path)
-            p.setPen(QPen(rgb(30, 70, 40, 120), 4))
-            for y in range(150, 560, 38):
-                p.drawLine(QPointF(x0, y), QPointF(x1, y))
-            p.setPen(QPen(rgb(230, 200, 120, 90), 1))
-            for y in range(160, 560, 38):
-                p.drawLine(QPointF(x0, y), QPointF(x1, y))
-            p.restore()
-            p.setBrush(rgb(200, 160, 70))
-            p.drawRoundedRect(QRectF(min(x0, x1) + 6, 318, x1 - x0 - 12, 9), 4, 4)
+    def _paint_floor(self, p: QPainter) -> None:
+        # wide oak boards running away from us, laid in true perspective
+        boards = tx.wood(1400, 1000, 70, False, "oak", 37)
+        vx, vy = W / 2, 250.0  # vanishing point
+        back_half = 1300.0
+        front_y = H + 260
+        front_half = back_half * (front_y - vy) / (FLOOR_Y - vy)
+        quad = QPolygonF([QPointF(vx - back_half, FLOOR_Y), QPointF(vx + back_half, FLOOR_Y),
+                          QPointF(vx + front_half, front_y), QPointF(vx - front_half, front_y)])
+        src = QPolygonF([QPointF(0, 0), QPointF(boards.width(), 0), QPointF(boards.width(), boards.height()), QPointF(0, boards.height())])
+        mapping = QTransform()
+        QTransform.quadToQuad(src, quad, mapping)
+        p.save()
+        p.setClipRect(QRectF(-200, FLOOR_Y, W + 400, 700))
+        p.setTransform(mapping, True)
+        p.drawImage(QPointF(0, 0), boards)
+        p.restore()
+        p.fillRect(QRectF(-200, FLOOR_Y, W + 400, 700), vgrad(FLOOR_Y, H, (0, rgb(20, 10, 4, 160)), (0.35, rgb(20, 10, 4, 50)), (1, rgb(0, 0, 0, 0))))
 
     def _paint_fireplace(self, p: QPainter) -> None:
-        rng = random.Random(77)
-        left, right = 1030.0, 1470.0
+        c = CHIMNEY
         p.setPen(Qt.NoPen)
-        p.fillRect(QRectF(left, 40, right - left, FLOOR_Y - 40), rgb(64, 58, 54))
-        y = 42.0
-        while y < FLOOR_Y:
-            h = rng.uniform(32, 44)
-            x = left + rng.uniform(-30, 0)
-            while x < right:
-                w = rng.uniform(46, 90)
-                base = rng.randint(118, 160)
-                tint = rgb(base + rng.randint(-6, 14), base - rng.randint(0, 12), base - rng.randint(6, 24))
-                r = QRectF(max(left, x) + 2, y + 2, min(right, x + w) - max(left, x) - 4, h - 4)
-                if r.width() > 6:
-                    p.setBrush(vgrad(r.top(), r.bottom(), scaled(tint, 1.12), tint, scaled(tint, 0.72)))
-                    p.drawRoundedRect(r, 9, 9)
-                x += w
-            y += h
-        # Firebox opening, with an arch of lighter stones
-        p.setPen(QPen(rgb(150, 138, 122), 26))
-        p.setBrush(Qt.NoBrush)
-        p.drawPath(firebox_path())
-        p.setPen(QPen(rgb(80, 72, 64), 2))
-        for i in range(11):
-            t = i / 10
-            # points along the arch (the quad curve) and its sides
-            ax = (1 - t) ** 2 * FIREBOX_LEFT + 2 * (1 - t) * t * 1250 + t ** 2 * FIREBOX_RIGHT
-            ay = (1 - t) ** 2 * 530 + 2 * (1 - t) * t * (FIREBOX_TOP - 22) + t ** 2 * 530
-            nx, ny = ax - 1250, ay - 620
-            n = math.hypot(nx, ny)
-            p.drawLine(QPointF(ax - nx / n * 13, ay - ny / n * 13), QPointF(ax + nx / n * 13, ay + ny / n * 13))
-        p.setPen(Qt.NoPen)
-        p.setBrush(vgrad(FIREBOX_TOP, FIREBOX_BOTTOM, rgb(18, 10, 8), rgb(36, 20, 12), rgb(60, 30, 16)))
-        p.drawPath(firebox_path())
-        # firebricks at the back
+        # the stone chimney breast, rising through the ceiling
+        stone = tx.stone_wall(int(c.width()), int(c.height()), 12)
+        p.drawImage(c.topLeft(), stone)
+        tx.shade_rect(p, c, left=0.35, right=0.45)
+        p.fillRect(QRectF(c.right(), BEAM_Y, 14, FLOOR_Y - BEAM_Y), hgrad(c.right(), c.right() + 14, rgb(0, 0, 0, 90), rgb(0, 0, 0, 0)))
+
+        # firebox: black iron surround, brick-lined, sooty at the top
+        fb = FIREBOX
+        p.setBrush(vgrad(fb.top() - 14, fb.bottom(), rgb(40, 38, 36), rgb(18, 16, 15)))
+        p.drawRect(fb.adjusted(-14, -14, 14, 0))
+        p.fillRect(fb, rgb(36, 18, 10))
         p.save()
-        p.setClipPath(firebox_path())
-        p.setPen(QPen(rgb(10, 6, 4, 140), 1.2))
-        for row, yy in enumerate(range(480, 690, 18)):
-            p.drawLine(QPointF(FIREBOX_LEFT, yy), QPointF(FIREBOX_RIGHT, yy))
-            for xx in range(int(FIREBOX_LEFT) + (20 if row % 2 else 0), int(FIREBOX_RIGHT), 40):
-                p.drawLine(QPointF(xx, yy), QPointF(xx, yy + 18))
+        p.setClipRect(fb)
+        # firebricks: the back wall, then the angled sides
+        for row, y in enumerate(range(int(fb.top()), int(fb.bottom()), 15)):
+            off = 0 if row % 2 else 20
+            for x in range(int(fb.left()) - off, int(fb.right()), 40):
+                b = QRectF(x + 1, y + 1, 38, 13)
+                tone = 0.75 + 0.25 * ((x * 7 + y * 13) % 11) / 10
+                p.setBrush(rgb(120 * tone, 56 * tone, 32 * tone))
+                p.drawRect(b)
+        for side in (-1, 1):
+            x = fb.left() if side < 0 else fb.right()
+            p.setBrush(rgb(20, 10, 6, 150))
+            p.drawPolygon(poly((x, fb.top()), (x - side * 48, fb.top() + 40), (x - side * 48, fb.bottom()), (x, fb.bottom())))
+        p.fillRect(fb, vgrad(fb.top(), fb.bottom(), (0, rgb(0, 0, 0, 230)), (0.45, rgb(0, 0, 0, 90)), (1, rgb(0, 0, 0, 40))))
+        # andirons / grate
+        p.setPen(QPen(rgb(26, 24, 22), 4))
+        p.drawLine(QPointF(fb.left() + 60, fb.bottom() - 12), QPointF(fb.right() - 60, fb.bottom() - 12))
+        for x in (fb.left() + 70, fb.right() - 70):
+            p.drawLine(QPointF(x, fb.bottom() - 30), QPointF(x, fb.bottom()))
+        p.setPen(Qt.NoPen)
         p.restore()
+
+        # raised stone hearth: a slab on top, stone face below
+        top = QRectF(c.left() - 16, HEARTH_TOP, c.width() + 32, 16)
+        face = QRectF(c.left() - 16, HEARTH_TOP + 16, c.width() + 32, HEARTH_FRONT - HEARTH_TOP - 16)
+        p.drawImage(face.topLeft(), tx.stone_wall(int(face.width()), int(face.height()), 15, 0.8))
+        tx.shade_rect(p, face, top=0.25, bottom=0.2, left=0.2, right=0.3)
+        p.drawImage(top.topLeft(), tx.stone_wall(int(top.width()), 16, 16, 2.5))
+        p.setBrush(vgrad(top.top(), top.bottom(), rgb(255, 240, 220, 60), rgb(0, 0, 0, 40)))
+        p.drawRect(top)
+        p.fillRect(QRectF(face.left(), face.bottom(), face.width(), 12), vgrad(face.bottom(), face.bottom() + 12, rgb(0, 0, 0, 110), rgb(0, 0, 0, 0)))
+        # fire tools on the hearth
+        tools_x = fb.right() + 66
+        p.setBrush(rgb(24, 22, 20))
+        p.drawRect(QRectF(tools_x - 2, 520, 4, HEARTH_TOP - 520))
+        p.drawEllipse(QPointF(tools_x, 516), 6, 6)
+        p.drawRect(QRectF(tools_x - 16, HEARTH_TOP - 4, 32, 4))
+        p.setPen(QPen(rgb(24, 22, 20), 2.4))
+        for dx, top_y in ((-10, 548), (10, 540), (-4, 552)):
+            p.drawLine(QPointF(tools_x + dx * 0.3, 534), QPointF(tools_x + dx, HEARTH_TOP - 8))
         p.setPen(Qt.NoPen)
 
-        # Hearth
-        p.setBrush(vgrad(FIREBOX_BOTTOM - 4, FIREBOX_BOTTOM + 34, rgb(170, 158, 144), rgb(110, 100, 90)))
-        p.drawRect(QRectF(990, FIREBOX_BOTTOM - 4, 520, 26))
-        p.setBrush(rgb(80, 72, 64))
-        p.drawRect(QRectF(990, FIREBOX_BOTTOM + 22, 520, 10))
-        # Fire irons
-        p.setBrush(rgb(40, 36, 34))
-        p.drawRect(QRectF(1002, 560, 5, 128))
-        p.drawEllipse(QPointF(1004.5, 556), 7, 7)
-        p.drawRect(QRectF(994, 684, 22, 5))
-        p.setPen(QPen(rgb(40, 36, 34), 3))
-        p.drawLine(QPointF(1012, 600), QPointF(1014, 676))
-        p.drawLine(QPointF(996, 590), QPointF(992, 670))
-        p.setPen(Qt.NoPen)
+        # the mantel: a rough-hewn beam on chunky corbels
+        mantel = QRectF(c.left() - 20, 366, c.width() + 40, 42)
+        for x in (mantel.left() + 34, mantel.right() - 74):
+            corbel = QPainterPath()
+            corbel.moveTo(x, mantel.bottom())
+            corbel.lineTo(x + 40, mantel.bottom())
+            corbel.lineTo(x + 40, mantel.bottom() + 16)
+            corbel.quadTo(x + 20, mantel.bottom() + 18, x + 12, mantel.bottom() + 40)
+            corbel.lineTo(x, mantel.bottom() + 40)
+            corbel.closeSubpath()
+            tx.draw_textured(p, corbel, tx.wood(44, 44, 200, False, "weathered", 41, seams=False, rough=0.4))
+            p.setBrush(rgb(0, 0, 0, 70))
+            p.drawRect(QRectF(x + 30, mantel.bottom(), 10, 40))
+        p.drawImage(mantel.topLeft(), tx.wood(int(mantel.width()), 42, 400, True, "weathered", 43, seams=False, rough=0.5))
+        tx.shade_rect(p, mantel, top=0.0, bottom=0.5)
+        p.setBrush(rgb(255, 230, 200, 50))
+        p.drawRect(QRectF(mantel.left(), mantel.top(), mantel.width(), 3))
+        p.fillRect(QRectF(mantel.left(), mantel.bottom(), mantel.width(), 14), vgrad(mantel.bottom(), mantel.bottom() + 14, rgb(0, 0, 0, 120), rgb(0, 0, 0, 0)))
 
-        # Mantel beam with corbels
-        wood = rgb(110, 66, 36)
-        for x in (1012, 1462):
-            p.setBrush(vgrad(430, 480, scaled(wood, 0.9), scaled(wood, 0.6)))
-            p.drawPolygon(poly((x, 430), (x + 26, 430), (x + 26, 446), (x + 13, 482), (x, 482)))
-        p.setBrush(vgrad(400, 438, scaled(wood, 1.3), wood, scaled(wood, 0.7)))
-        p.drawRect(QRectF(996, 402, 508, 34))
-        p.setPen(QPen(alpha(scaled(wood, 0.6), 160), 1))
-        for yy in (410, 418, 427):
-            p.drawLine(QPointF(1000, yy), QPointF(1500, yy + rng.uniform(-1, 1)))
-        p.setPen(Qt.NoPen)
+        self._paint_mantel_things(p, mantel.top())
 
-        # Painting of the lake above the mantel
-        frame = QRectF(1158, 186, 184, 150)
-        p.setBrush(vgrad(frame.top(), frame.bottom(), rgb(196, 150, 70), rgb(120, 84, 30)))
+    def _paint_mantel_things(self, p: QPainter, shelf: float) -> None:
+        p.setPen(Qt.NoPen)
+        # a framed landscape painting, leaning against the stone
+        frame = QRectF(590, 196, 210, shelf - 196)
+        p.setBrush(rgb(0, 0, 0, 90))
+        p.drawRect(frame.translated(6, 4))
+        p.setBrush(vgrad(frame.top(), frame.bottom(), rgb(120, 84, 48), rgb(70, 46, 26)))
         p.drawRect(frame)
-        pic = frame.adjusted(14, 14, -14, -14)
-        p.setBrush(vgrad(pic.top(), pic.bottom(), rgb(250, 190, 120), rgb(240, 140, 90), rgb(110, 90, 120)))
+        mat = frame.adjusted(9, 9, -9, -9)
+        p.setBrush(rgb(232, 224, 204))
+        p.drawRect(mat)
+        pic = mat.adjusted(12, 12, -12, -12)
+        p.setBrush(vgrad(pic.top(), pic.bottom(), rgb(196, 214, 222), rgb(232, 220, 190)))
         p.drawRect(pic)
-        p.setBrush(rgb(255, 230, 160))
-        p.drawEllipse(QPointF(pic.center().x() + 20, pic.top() + 52), 12, 12)
-        p.setBrush(rgb(80, 70, 100))
-        p.drawPolygon(poly((pic.left(), pic.top() + 78), (pic.left() + 50, pic.top() + 40), (pic.left() + 95, pic.top() + 70),
-                           (pic.left() + 130, pic.top() + 46), (pic.right(), pic.top() + 74), (pic.right(), pic.top() + 80), (pic.left(), pic.top() + 80)))
-        p.setBrush(vgrad(pic.top() + 80, pic.bottom(), rgb(200, 130, 100), rgb(60, 60, 90)))
-        p.drawRect(QRectF(pic.left(), pic.top() + 80, pic.width(), pic.height() - 80))
-        p.setBrush(rgb(30, 40, 36))
-        for i in range(7):
-            tx = pic.left() + 8 + i * 9
-            p.drawPolygon(poly((tx - 5, pic.top() + 82), (tx, pic.top() + 58 - (i % 3) * 6), (tx + 5, pic.top() + 82)))
+        p.save()
+        p.setClipRect(pic)
+        p.setBrush(rgb(120, 136, 150))
+        p.drawPolygon(poly((pic.left(), pic.top() + 70), (pic.left() + 50, pic.top() + 34), (pic.left() + 96, pic.top() + 60),
+                           (pic.left() + 140, pic.top() + 30), (pic.right(), pic.top() + 66), (pic.right(), pic.bottom()), (pic.left(), pic.bottom())))
+        p.setBrush(rgb(110, 128, 72))
+        p.drawPolygon(poly((pic.left(), pic.top() + 86), (pic.right(), pic.top() + 78), (pic.right(), pic.bottom()), (pic.left(), pic.bottom())))
+        p.setBrush(rgb(170, 190, 200))
+        river = QPainterPath()
+        river.moveTo(pic.left() + 60, pic.bottom())
+        river.cubicTo(pic.left() + 80, pic.top() + 110, pic.left() + 120, pic.top() + 96, pic.left() + 100, pic.top() + 84)
+        river.lineTo(pic.left() + 110, pic.top() + 84)
+        river.cubicTo(pic.left() + 140, pic.top() + 100, pic.left() + 110, pic.top() + 116, pic.left() + 96, pic.bottom())
+        p.drawPath(river)
+        rng = random.Random(51)
+        for i in range(14):  # autumn trees
+            x = pic.left() + rng.uniform(0, pic.width())
+            y = pic.top() + rng.uniform(78, 100)
+            colour = rgb(*rng.choice(((190, 110, 50), (160, 70, 40), (210, 160, 60), (70, 100, 50))))
+            p.setBrush(colour)
+            p.drawEllipse(QPointF(x, y), rng.uniform(5, 9), rng.uniform(7, 12))
+        p.restore()
 
-        # Things on the mantel: candlesticks, a stoneware jug, some books
+        # an iron pot with greenery, and a stoneware bowl
+        p.setBrush(radial(500, 330, 34, rgb(110, 100, 86), rgb(52, 46, 40)))
+        pot = QPainterPath()
+        pot.moveTo(484, shelf)
+        pot.cubicTo(470, 344, 478, 320, 492, 316)
+        pot.lineTo(530, 316)
+        pot.cubicTo(544, 320, 552, 344, 538, shelf)
+        pot.closeSubpath()
+        p.drawPath(pot)
+        rng = random.Random(53)
+        for i in range(22):
+            a = math.radians(rng.uniform(-75, 75))
+            length = rng.uniform(40, 96)
+            base = QPointF(511 + rng.uniform(-10, 10), 318)
+            tip = QPointF(base.x() + math.sin(a) * length, base.y() - math.cos(a) * length * 0.9)
+            p.setPen(QPen(rgb(70, 86, 46), 1.4))
+            p.drawLine(base, tip)
+            p.setPen(Qt.NoPen)
+            for k in range(1, 6):
+                lp = QPointF(base.x() + (tip.x() - base.x()) * k / 6, base.y() + (tip.y() - base.y()) * k / 6)
+                p.setBrush(rgb(rng.randint(70, 110), rng.randint(100, 130), rng.randint(56, 70)))
+                p.drawEllipse(lp, 4, 2.2)
+        p.setBrush(vgrad(shelf - 22, shelf, rgb(170, 150, 120), rgb(110, 92, 72)))
+        p.drawChord(QRectF(548, shelf - 40, 52, 40), 180 * 16, 180 * 16)
+
+        # tall iron candlesticks (the flames are drawn per frame)
         for c in CANDLES:
-            p.setBrush(vgrad(c.y() + 30, c.y() + 50, rgb(220, 180, 90), rgb(140, 100, 40)))
-            p.drawPolygon(poly((c.x() - 14, 402), (c.x() + 14, 402), (c.x() + 5, 392), (c.x() + 4, 376), (c.x() - 4, 376), (c.x() - 5, 392)))
-            p.drawEllipse(QPointF(c.x(), 376), 9, 3)
-            p.setBrush(hgrad(c.x() - 6, c.x() + 6, rgb(250, 244, 226), rgb(236, 226, 200), rgb(206, 194, 168)))
-            p.drawRect(QRectF(c.x() - 5, c.y() + 6, 10, 370 - c.y() - 6 + 6))
+            p.setBrush(rgb(30, 28, 26))
+            p.drawEllipse(QPointF(c.x(), shelf - 3), 13, 4)
+            p.drawRect(QRectF(c.x() - 2.5, c.y() + 46, 5, shelf - c.y() - 46))
+            p.drawEllipse(QPointF(c.x(), c.y() + 72), 6, 4)
+            p.drawEllipse(QPointF(c.x(), c.y() + 48), 9, 3.5)
+            p.setBrush(hgrad(c.x() - 7, c.x() + 7, rgb(250, 244, 226), rgb(236, 228, 206), rgb(200, 190, 166)))
+            p.drawRect(QRectF(c.x() - 6, c.y() + 6, 12, 40))
             p.setPen(QPen(rgb(40, 30, 20), 1.2))
             p.drawLine(QPointF(c.x(), c.y() + 6), QPointF(c.x(), c.y() + 1))
             p.setPen(Qt.NoPen)
-        p.setBrush(hgrad(1100, 1140, rgb(120, 100, 80), rgb(176, 150, 120), rgb(100, 82, 64)))
-        jug = QPainterPath()
-        jug.moveTo(1108, 402)
-        jug.cubicTo(1096, 380, 1104, 364, 1112, 360)
-        jug.lineTo(1128, 360)
-        jug.cubicTo(1136, 364, 1144, 380, 1132, 402)
-        jug.closeSubpath()
-        p.drawPath(jug)
-        p.setPen(QPen(rgb(110, 92, 72), 3))
-        p.setBrush(Qt.NoBrush)
-        p.drawArc(QRectF(1128, 366, 16, 20), -90 * 16, 180 * 16)
+        # a little brass pot
+        p.setBrush(radial(916, 340, 26, rgb(240, 200, 120), rgb(160, 110, 40), rgb(90, 60, 20)))
+        p.drawEllipse(QRectF(896, 336, 40, 30))
+        p.drawRect(QRectF(906, 330, 20, 8))
+
+    def _paint_lamp(self, p: QPainter) -> None:
         p.setPen(Qt.NoPen)
-        for i, (colour, h) in enumerate(((rgb(110, 30, 30), 34), (rgb(30, 60, 90), 30), (rgb(50, 80, 50), 36), (rgb(120, 90, 40), 28))):
-            p.setBrush(colour)
-            p.drawRect(QRectF(1360 + i * 11, 402 - h, 10, h))
-            p.setBrush(rgb(220, 190, 110, 160))
-            p.drawRect(QRectF(1360 + i * 11, 402 - h + 6, 10, 2))
+        x = LAMP.x()
+        p.setBrush(rgb(30, 26, 22))
+        p.drawEllipse(QPointF(x, FLOOR_Y + 6), 26, 6)
+        p.drawRect(QRectF(x - 2.5, LAMP.y() + 30, 5, FLOOR_Y + 4 - LAMP.y() - 30))
+        shade = QPainterPath()
+        shade.moveTo(x - 30, LAMP.y() - 32)
+        shade.lineTo(x + 30, LAMP.y() - 32)
+        shade.lineTo(x + 40, LAMP.y() + 32)
+        shade.lineTo(x - 40, LAMP.y() + 32)
+        shade.closeSubpath()
+        tx.draw_textured(p, shade, tx.fabric(90, 70, (228, 214, 186), 61))
+        tx.shade_rect(p, shade.boundingRect(), left=0.2, right=0.35)
+
+    def _paint_armchair(self, p: QPainter) -> None:
+        """A leather club chair by the window, turned a little towards the fire."""
+        leather = rgb(118, 58, 30)
+        dark = scaled(leather, 0.5)
+        hi = scaled(leather, 1.45)
+        p.setPen(Qt.NoPen)
+        p.setBrush(radial(1206, 748, 150, (0, rgb(0, 0, 0, 110)), (1, rgb(0, 0, 0, 0))))
+        p.drawEllipse(QPointF(1206, 748), 150, 20)
+        p.setBrush(rgb(46, 28, 16))
+        for x in (1104, 1300):
+            p.drawRect(QRectF(x, 718, 12, 30))
+        # the barrel back
+        back = QPainterPath()
+        back.moveTo(1112, 640)
+        back.cubicTo(1108, 572, 1124, 520, 1166, 512)
+        back.cubicTo(1200, 506, 1236, 506, 1262, 512)
+        back.cubicTo(1300, 520, 1314, 572, 1310, 640)
+        back.closeSubpath()
+        p.setBrush(radial(1190, 540, 160, (0, hi), (0.5, leather), (1, dark)))
+        p.drawPath(back)
+        p.setBrush(Qt.NoBrush)
+        p.setPen(QPen(alpha(dark, 120), 1.4))
+        p.drawPath(back.translated(0, 10))
+        p.setPen(Qt.NoPen)
+        # seat cushion and the front skirt
+        p.setBrush(vgrad(660, 724, leather, dark))
+        p.drawRoundedRect(QRectF(1132, 664, 160, 60), 10, 10)
+        p.setBrush(radial(1200, 640, 120, (0, hi), (0.7, leather), (1, scaled(leather, 0.8))))
+        p.drawRoundedRect(QRectF(1136, 632, 152, 40), 16, 16)
+        # rolled arms, front faces towards us
+        for x0 in (1092, 1272):
+            arm = QRectF(x0, 588, 52, 136)
+            p.setBrush(hgrad(arm.left(), arm.right(), scaled(leather, 0.7), hi, leather, dark))
+            p.drawRoundedRect(arm, 20, 20)
+            p.setBrush(radial(arm.center().x() - 6, arm.top() + 14, 30, (0, hi), (1, leather)))
+            p.drawEllipse(QPointF(arm.center().x(), arm.top() + 18), 25, 20)
+            p.setBrush(alpha(dark, 120))
+            p.drawEllipse(QPointF(arm.center().x(), arm.top() + 18), 10, 8)
+            # brass nailheads down the front of the arm
+            p.setBrush(rgb(200, 160, 90))
+            for y in range(604, 718, 10):
+                p.drawEllipse(QPointF(arm.left() + 6, y), 1.4, 1.4)
+        # an olive cushion against the back
+        cushion = QPainterPath()
+        cushion.moveTo(1156, 636)
+        cushion.cubicTo(1150, 600, 1160, 566, 1176, 560)
+        cushion.cubicTo(1210, 552, 1246, 554, 1258, 562)
+        cushion.cubicTo(1270, 590, 1268, 616, 1262, 638)
+        cushion.closeSubpath()
+        tx.draw_textured(p, cushion, tx.fabric(130, 90, (128, 132, 92), 63))
+        tx.shade_rect(p, cushion.boundingRect(), top=0.0, bottom=0.4, left=0.2, right=0.3)
 
     def _paint_rug(self, p: QPainter) -> None:
-        c = QPointF(1080, 812)
-        colours = (rgb(120, 34, 30), rgb(200, 170, 120), rgb(60, 90, 60), rgb(150, 60, 40), rgb(210, 180, 130), rgb(110, 30, 28))
+        rug = QPainterPath()
+        rug.moveTo(330, 712)
+        rug.lineTo(1260, 712)
+        rug.lineTo(1450, H + 20)
+        rug.lineTo(120, H + 20)
+        rug.closeSubpath()
         p.setPen(Qt.NoPen)
-        p.setBrush(rgb(0, 0, 0, 60))
-        p.drawEllipse(c + QPointF(0, 8), 392, 70)
-        for i, colour in enumerate(colours):
-            k = 1 - i / len(colours)
-            p.setBrush(colour)
-            p.drawEllipse(c, 390 * k, 66 * k)
-        p.setPen(QPen(rgb(0, 0, 0, 40), 1))
-        p.setBrush(Qt.NoBrush)
-        for i in range(1, 24):
-            k = i / 24
-            p.drawEllipse(c, 390 * k, 66 * k)
-        p.setPen(Qt.NoPen)
-
-    def _paint_chair(self, p: QPainter) -> None:
-        leather = rgb(112, 40, 30)
-        dark = scaled(leather, 0.6)
-        p.setPen(Qt.NoPen)
-        # shadow
         p.setBrush(rgb(0, 0, 0, 70))
-        p.drawEllipse(QPointF(880, 836), 150, 18)
-        # back legs and front legs
-        p.setBrush(rgb(60, 36, 22))
-        for x in (790, 960):
-            p.drawRect(QRectF(x, 790, 12, 46))
-        # back, seen from the side, with its wing
-        back = QPainterPath()
-        back.moveTo(770, 800)
-        back.cubicTo(760, 700, 760, 560, 790, 500)
-        back.cubicTo(808, 480, 846, 486, 850, 520)
-        back.lineTo(846, 800)
-        back.closeSubpath()
-        p.setBrush(hgrad(760, 850, scaled(leather, 0.75), scaled(leather, 1.15), dark))
-        p.drawPath(back)
-        # seat and front
-        p.setBrush(vgrad(690, 800, scaled(leather, 1.1), leather, dark))
-        p.drawRoundedRect(QRectF(800, 690, 190, 110), 18, 18)
-        # cushion
-        p.setBrush(vgrad(668, 700, scaled(leather, 1.35), scaled(leather, 1.05)))
-        p.drawRoundedRect(QRectF(830, 668, 160, 32), 14, 14)
-        # arm with a rolled front
-        p.setBrush(vgrad(626, 720, scaled(leather, 1.2), leather, dark))
-        p.drawRoundedRect(QRectF(806, 632, 196, 64), 20, 20)
-        p.setBrush(radial(992, 660, 34, scaled(leather, 1.3), dark))
-        p.drawEllipse(QPointF(990, 662), 26, 32)
-        # buttons
-        p.setBrush(scaled(leather, 0.5))
-        for y in range(540, 640, 26):
-            p.drawEllipse(QPointF(806 + (y % 3) * 4, y), 2.5, 2.5)
-        # a tartan blanket over the arm
-        throw = QPainterPath()
-        throw.moveTo(870, 630)
-        throw.cubicTo(900, 622, 940, 624, 960, 632)
-        throw.lineTo(966, 742)
-        throw.cubicTo(940, 752, 900, 748, 878, 740)
-        throw.closeSubpath()
-        p.setBrush(rgb(40, 76, 60))
-        p.drawPath(throw)
-        p.save()
-        p.setClipPath(throw)
-        p.setPen(QPen(rgb(170, 40, 36, 200), 5))
-        for x in range(870, 970, 22):
-            p.drawLine(QPointF(x, 620), QPointF(x + 4, 760))
-        for y in range(630, 760, 22):
-            p.drawLine(QPointF(860, y), QPointF(980, y))
-        p.setPen(QPen(rgb(230, 200, 120, 140), 1.5))
-        for x in range(880, 970, 22):
-            p.drawLine(QPointF(x, 620), QPointF(x + 4, 760))
-        p.restore()
-        p.setPen(QPen(rgb(230, 200, 120, 160), 1.5))
-        for x in range(882, 964, 6):
-            p.drawLine(QPointF(x, 744 + (x % 12) * 0.3), QPointF(x, 754))
-        p.setPen(Qt.NoPen)
-
-    def _paint_lamp_table(self, p: QPainter) -> None:
-        wood = rgb(106, 64, 34)
-        p.setPen(Qt.NoPen)
-        p.setBrush(rgb(0, 0, 0, 60))
-        p.drawEllipse(QPointF(536, 852), 70, 10)
-        p.setBrush(hgrad(526, 546, scaled(wood, 0.7), scaled(wood, 1.2), scaled(wood, 0.7)))
-        p.drawRect(QRectF(528, 672, 16, 160))
-        p.setBrush(scaled(wood, 0.8))
-        p.drawPolygon(poly((490, 852), (536, 820), (582, 852), (574, 856), (536, 830), (498, 856)))
-        p.setBrush(vgrad(656, 680, scaled(wood, 1.3), scaled(wood, 0.75)))
-        p.drawEllipse(QRectF(474, 652, 124, 26))
-        p.drawRect(QRectF(474, 664, 124, 10))
-        p.setBrush(scaled(wood, 1.4))
-        p.drawEllipse(QRectF(474, 652, 124, 20))
-        # a book
-        p.setBrush(rgb(40, 60, 90))
-        p.drawPolygon(poly((548, 662), (588, 660), (590, 668), (550, 670)))
-        p.setBrush(rgb(230, 220, 196))
-        p.drawPolygon(poly((548, 662), (588, 660), (588, 663), (549, 665)))
-        # oil lamp: brass font, glass chimney
-        p.setBrush(radial(528, 646, 30, rgb(250, 220, 140), rgb(200, 150, 60), rgb(120, 84, 30)))
-        p.drawEllipse(QPointF(535, 648), 22, 14)
-        p.drawRect(QRectF(523, 654, 24, 8))
-        p.setBrush(rgb(150, 110, 40))
-        p.drawRect(QRectF(526, 628, 18, 8))
-        chimney = QPainterPath()
-        chimney.moveTo(526, 628)
-        chimney.cubicTo(512, 610, 516, 594, 527, 584)
-        chimney.lineTo(529, 560)
-        chimney.lineTo(541, 560)
-        chimney.lineTo(543, 584)
-        chimney.cubicTo(554, 594, 558, 610, 544, 628)
-        chimney.closeSubpath()
-        p.setBrush(rgb(255, 250, 240, 70))
-        p.drawPath(chimney)
-        p.setPen(QPen(rgb(255, 255, 255, 120), 1))
+        p.drawPath(rug.translated(0, 6))
+        tx.draw_textured(p, rug, tx.jute(1340, 220, 71))
+        tx.shade_rect(p, rug.boundingRect(), top=0.35, bottom=0.0)
         p.setBrush(Qt.NoBrush)
-        p.drawPath(chimney)
+        p.setPen(QPen(rgb(120, 92, 60), 4))
+        p.drawPath(rug)
         p.setPen(Qt.NoPen)
 
-    def _paint_log_basket(self, p: QPainter) -> None:
+    def _paint_log_bucket(self, p: QPainter) -> None:
         p.setPen(Qt.NoPen)
-        p.setBrush(rgb(0, 0, 0, 60))
-        p.drawEllipse(QPointF(1556, 722), 64, 9)
-        for i in range(7):
-            x = 1508 + (i % 4) * 26 + (8 if i >= 4 else 0)
-            y = 650 - (14 if i >= 4 else 0)
-            p.setBrush(rgb(150, 104, 64))
-            p.drawEllipse(QPointF(x, y), 14, 13)
-            p.setBrush(rgb(196, 152, 100))
-            p.drawEllipse(QPointF(x, y), 10, 9)
-            p.setPen(QPen(rgb(150, 104, 64), 1))
-            p.setBrush(Qt.NoBrush)
-            p.drawEllipse(QPointF(x, y), 5, 4.5)
+        rng = random.Random(81)
+        for i in range(6):  # split logs standing up
+            x = 404 + i * 10 + rng.uniform(-2, 2)
+            top = 586 + rng.uniform(-10, 8)
+            p.setBrush(vgrad(top, 640, rgb(196, 160, 112), rgb(140, 100, 60)))
+            p.drawPolygon(poly((x - 6, 640), (x - 4, top + 6), (x + 2, top), (x + 8, top + 4), (x + 7, 640)))
+        bucket = QPainterPath()
+        bucket.moveTo(392, 618)
+        bucket.lineTo(470, 618)
+        bucket.lineTo(464, 690)
+        bucket.lineTo(398, 690)
+        bucket.closeSubpath()
+        p.setBrush(hgrad(392, 470, rgb(90, 70, 50), rgb(170, 130, 90), rgb(120, 92, 64), rgb(60, 46, 34)))
+        p.drawPath(bucket)
+        p.setPen(QPen(rgb(50, 38, 28), 2))
+        for y in (626, 682):
+            p.drawLine(QPointF(394, y), QPointF(468, y))
+        p.setPen(Qt.NoPen)
+
+    def _paint_coffee_table(self, p: QPainter) -> None:
+        top = poly((680, 640), (1130, 640), (1166, 690), (646, 690))
+        front = QRectF(646, 690, 520, 34)
+        p.setPen(Qt.NoPen)
+        p.setBrush(rgb(0, 0, 0, 90))
+        p.drawEllipse(QPointF(906, 838), 300, 24)
+        # chunky block legs
+        for x in (668, 1094):
+            leg = QRectF(x, 720, 54, 112)
+            p.drawImage(leg.topLeft(), tx.wood(54, 112, 27, False, "weathered", 91 + x, rough=0.3))
+            tx.shade_rect(p, leg, top=0.4, left=0.2, right=0.45)
+        p.setBrush(rgb(40, 24, 12, 200))
+        p.drawRect(QRectF(722, 722, 372, 50))
+        # the top: thick reclaimed planks
+        top_path = QPainterPath()
+        top_path.addPolygon(top)
+        tx.draw_textured(p, top_path, tx.wood(530, 52, 13, True, "weathered", 93, rough=0.35))
+        p.setBrush(vgrad(640, 690, rgb(255, 230, 190, 30), rgb(0, 0, 0, 30)))
+        p.drawPolygon(top)
+        p.drawImage(front.topLeft(), tx.wood(520, 34, 17, True, "weathered", 95, rough=0.35))
+        tx.shade_rect(p, front, top=0.1, bottom=0.45)
+        p.fillRect(QRectF(front.left(), front.top(), front.width(), 2), rgb(255, 230, 190, 60))
+
+        # on the table: a wooden tray with bowls, books, a jar candle, greenery
+        p.setBrush(vgrad(650, 672, rgb(130, 86, 48), rgb(84, 52, 28)))
+        p.drawEllipse(QRectF(720, 648, 130, 26))
+        p.setBrush(rgb(150, 110, 70))
+        p.drawEllipse(QRectF(740, 648, 46, 16))
+        p.drawEllipse(QRectF(792, 652, 38, 13))
+        for i, (colour, h) in enumerate(((rgb(60, 66, 74), 9), (rgb(220, 214, 196), 8), (rgb(70, 58, 46), 9))):
+            y = 676 - i * 9
+            p.setBrush(colour)
+            p.drawPolygon(poly((930 + i * 3, y), (1040 - i * 2, y), (1044 - i * 2, y - h), (934 + i * 3, y - h)))
+            p.setBrush(rgb(236, 230, 214))
+            p.drawRect(QRectF(1036 - i * 2, y - h + 2, 4, h - 3))
+        p.setBrush(hgrad(970, 1002, rgb(240, 232, 214), rgb(255, 250, 238), rgb(214, 204, 184)))
+        p.drawRect(QRectF(TABLE_CANDLE.x() - 15, TABLE_CANDLE.y() + 6, 30, 26))
+        p.setBrush(rgb(255, 238, 200, 160))
+        p.drawEllipse(QRectF(TABLE_CANDLE.x() - 15, TABLE_CANDLE.y() + 2, 30, 8))
+        # a stoneware jug with a few sprigs
+        p.setBrush(radial(884, 640, 26, rgb(150, 140, 120), rgb(84, 76, 64)))
+        p.drawEllipse(QRectF(866, 622, 40, 46))
+        rng = random.Random(97)
+        for i in range(12):
+            a = math.radians(rng.uniform(-60, 60))
+            length = rng.uniform(26, 56)
+            base = QPointF(886, 626)
+            tip = QPointF(base.x() + math.sin(a) * length, base.y() - math.cos(a) * length)
+            p.setPen(QPen(rgb(80, 96, 50), 1.2))
+            p.drawLine(base, tip)
             p.setPen(Qt.NoPen)
-        basket = poly((1494, 650), (1618, 650), (1606, 720), (1506, 720))
-        p.setBrush(vgrad(650, 720, rgb(176, 136, 80), rgb(120, 86, 46)))
-        p.drawPolygon(basket)
-        p.setPen(QPen(rgb(100, 70, 36), 1.4))
-        for y in range(658, 720, 8):
-            p.drawLine(QPointF(1496, y), QPointF(1616, y))
+            p.setBrush(rgb(96, 118, 62))
+            for k in range(1, 5):
+                p.drawEllipse(QPointF(base.x() + (tip.x() - base.x()) * k / 5, base.y() + (tip.y() - base.y()) * k / 5), 3.2, 1.8)
+
+    def _paint_sofa(self, p: QPainter) -> None:
+        """A linen sofa in the foreground, its back towards us, with cushions
+        peeking over and a chunky knit throw over the end."""
+        linen = tx.fabric(560, 320, (224, 214, 194), 101)
         p.setPen(Qt.NoPen)
+        # cushions leaning against the back, seen over its top
+        for x0, w, colour, seed, knitted in ((1290, 120, (150, 64, 40), 111, True), (1398, 116, (118, 124, 80), 113, False),
+                                              (1500, 130, (168, 128, 86), 115, False)):
+            top = 668 - (x0 - 1290) * 0.12
+            cushion = QPainterPath()
+            cushion.moveTo(x0, top + 70)
+            cushion.cubicTo(x0 - 6, top + 20, x0 + 10, top - 6, x0 + w * 0.5, top - 4)
+            cushion.cubicTo(x0 + w - 10, top - 6, x0 + w + 6, top + 20, x0 + w, top + 70)
+            cushion.closeSubpath()
+            tex = tx.knit(w + 10, 90, colour, seed) if knitted else tx.fabric(w + 10, 90, colour, seed)
+            tx.draw_textured(p, cushion, tex)
+            tx.shade_rect(p, cushion.boundingRect(), top=0.0, bottom=0.5, left=0.2, right=0.35)
+        # the back: a long, softly rounded shape running off to the right
+        back = QPainterPath()
+        back.moveTo(1190, H + 20)
+        back.lineTo(1196, 744)
+        back.cubicTo(1200, 718, 1230, 706, 1290, 704)
+        back.cubicTo(1420, 696, 1560, 682, 1660, 676)
+        back.lineTo(1660, H + 20)
+        back.closeSubpath()
+        tx.draw_textured(p, back, linen)
+        p.setBrush(vgrad(676, H, (0, rgb(255, 250, 240, 70)), (0.12, rgb(255, 250, 240, 0)), (0.6, rgb(0, 0, 0, 40)), (1, rgb(0, 0, 0, 110))))
+        p.drawPath(back)
+        # piping along the top edge
+        top_edge = QPainterPath(QPointF(1196, 744))
+        top_edge.cubicTo(1200, 718, 1230, 706, 1290, 704)
+        top_edge.cubicTo(1420, 696, 1560, 682, 1660, 676)
+        p.setBrush(Qt.NoBrush)
+        p.setPen(QPen(rgb(176, 166, 146), 3))
+        p.drawPath(top_edge.translated(0, 6))
+        p.setPen(Qt.NoPen)
+        # the rolled arm at the near end
+        arm = QPainterPath()
+        arm.moveTo(1150, H + 20)
+        arm.lineTo(1150, 736)
+        arm.cubicTo(1150, 700, 1200, 690, 1226, 704)
+        arm.cubicTo(1246, 716, 1246, 740, 1240, 760)
+        arm.lineTo(1240, H + 20)
+        arm.closeSubpath()
+        tx.draw_textured(p, arm, linen, QPointF(30, 0))
+        p.setBrush(hgrad(1150, 1244, (0, rgb(255, 250, 240, 60)), (0.5, rgb(0, 0, 0, 0)), (1, rgb(0, 0, 0, 90))))
+        p.drawPath(arm)
+        p.setBrush(radial(1196, 714, 40, (0, rgb(255, 252, 244, 110)), (1, rgb(0, 0, 0, 0))))
+        p.drawEllipse(QPointF(1196, 716), 36, 20)
+        # a chunky rust knit throw over the back, falling towards us
+        throw = QPainterPath()
+        throw.moveTo(1268, 712)
+        throw.cubicTo(1300, 690, 1380, 688, 1420, 698)
+        throw.cubicTo(1430, 760, 1418, 840, 1440, H + 20)
+        throw.lineTo(1262, H + 20)
+        throw.cubicTo(1276, 840, 1256, 760, 1268, 712)
+        throw.closeSubpath()
+        tx.draw_textured(p, throw, tx.knit(190, 230, (152, 58, 34), 117))
+        p.setBrush(hgrad(1256, 1440, (0, rgb(0, 0, 0, 90)), (0.3, rgb(0, 0, 0, 0)), (0.75, rgb(0, 0, 0, 0)), (1, rgb(0, 0, 0, 110))))
+        p.drawPath(throw)
+        p.setBrush(vgrad(690, 740, rgb(255, 220, 190, 50), rgb(0, 0, 0, 0)))
+        p.drawPath(throw)
 
     def _paint_glass(self, p: QPainter) -> None:
         w = self.outside.weather
-        # Frost creeping in from the corners on a cold day
+        # frost creeping in from each pane's corners on a cold day
         if w.snow_on_ground or w.frozen_lake:
             k = 1.0 if w.frozen_lake else 0.6
-            for cx, cy in ((GLASS.left(), GLASS.top()), (GLASS.right(), GLASS.top()), (GLASS.left(), GLASS.bottom()), (GLASS.right(), GLASS.bottom())):
-                p.setPen(Qt.NoPen)
-                p.setBrush(radial(cx, cy, 90, (0, rgb(235, 242, 250, 200 * k)), (0.5, rgb(225, 235, 245, 90 * k)), (1, rgb(220, 230, 240, 0))))
-                p.drawEllipse(QPointF(cx, cy), 90, 90)
-        # Raindrops on the glass
+            p.setPen(Qt.NoPen)
+            for pane in PANES:
+                r = min(pane.width(), pane.height()) * 0.45
+                for corner in (pane.topLeft(), pane.topRight(), pane.bottomLeft(), pane.bottomRight()):
+                    p.setBrush(radial(corner.x(), corner.y(), r, (0, rgb(235, 242, 250, 190 * k)),
+                                      (0.5, rgb(225, 235, 245, 70 * k)), (1, rgb(220, 230, 240, 0))))
+                    p.drawEllipse(corner, r, r)
         if self._drops:
             light = mix(rgb(70, 80, 100), rgb(220, 230, 240), self.outside.light.daylight)
             p.setPen(Qt.NoPen)
@@ -536,11 +662,8 @@ class InsideScene:
                 p.drawEllipse(QPointF(x - r * 0.3, y - r * 0.35), r * 0.35, r * 0.35)
 
     def _paint_small_flames(self, p: QPainter) -> None:
-        lamp_on = self.lamp_on()
-        flames = [(c, 1.0) for c in CANDLES]
-        if lamp_on:
-            flames.append((LAMP_FLAME, 1.3))
         p.setPen(Qt.NoPen)
+        flames = [(c, 1.0) for c in CANDLES] + [(TABLE_CANDLE + QPointF(0, 2), 0.9)]
         for i, (c, size) in enumerate(flames):
             sway = 1.5 * wobble(self.t * 3 + i * 2, 1.0, 2.7)
             h = (14 + 2 * wobble(self.t * 5 + i, 1.3, 3.1)) * size
@@ -553,10 +676,97 @@ class InsideScene:
             flame.closeSubpath()
             p.setBrush(vgrad(c.y() - h, c.y() + 2, rgb(255, 240, 180), rgb(255, 170, 60), rgb(120, 140, 255)))
             p.drawPath(flame)
+        if self.lamp_on():  # the lamp shade glowing from within
+            shade = QPainterPath()
+            x = LAMP.x()
+            shade.moveTo(x - 30, LAMP.y() - 32)
+            shade.lineTo(x + 30, LAMP.y() - 32)
+            shade.lineTo(x + 40, LAMP.y() + 32)
+            shade.lineTo(x - 40, LAMP.y() + 32)
+            shade.closeSubpath()
+            p.setBrush(vgrad(LAMP.y() - 32, LAMP.y() + 32, rgb(255, 214, 140, 120), rgb(255, 200, 120, 190)))
+            p.drawPath(shade)
 
-    def lamp_on(self) -> bool:
-        l = self.outside.light
-        return l.daylight < 0.55 or (l.daylight < 0.8 and self.outside.weather.clouds > 0.85)
+    def _paint_dog(self, p: QPainter) -> None:
+        """A golden retriever asleep on the rug, breathing slowly."""
+        breath = 1 + 0.02 * math.sin(self.t * 1.7)
+        gold, light, dark, deep = rgb(206, 140, 66), rgb(240, 196, 128), rgb(150, 92, 40), rgb(110, 64, 28)
+        c = DOG
+        p.save()
+        p.setPen(Qt.NoPen)
+        p.setBrush(radial(c.x(), c.y() + 30, 150, (0, rgb(0, 0, 0, 100)), (1, rgb(0, 0, 0, 0))))
+        p.drawEllipse(QPointF(c.x() + 4, c.y() + 36), 140, 22)
+        # feathery tail curled round in front
+        tail = QPainterPath()
+        tail.moveTo(c.x() - 84, c.y() + 16)
+        tail.cubicTo(c.x() - 124, c.y() + 46, c.x() - 50, c.y() + 60, c.x() + 20, c.y() + 46)
+        tail.cubicTo(c.x() - 40, c.y() + 44, c.x() - 92, c.y() + 38, c.x() - 74, c.y() + 10)
+        tail.closeSubpath()
+        p.setBrush(vgrad(c.y() + 10, c.y() + 58, light, gold))
+        p.drawPath(tail)
+        # the curled body, rising and falling
+        p.save()
+        p.translate(c.x() - 20, c.y() + 34)
+        p.scale(1.0 + (breath - 1) * 0.4, breath)
+        p.translate(-(c.x() - 20), -(c.y() + 34))
+        body = QPainterPath()
+        body.moveTo(c.x() - 96, c.y() + 34)
+        body.cubicTo(c.x() - 112, c.y() - 28, c.x() - 40, c.y() - 62, c.x() + 14, c.y() - 50)
+        body.cubicTo(c.x() + 56, c.y() - 42, c.x() + 66, c.y() + 6, c.x() + 54, c.y() + 34)
+        body.closeSubpath()
+        p.setBrush(radial(c.x() - 34, c.y() - 34, 120, (0, light), (0.55, gold), (1, dark)))
+        p.drawPath(body)
+        # haunch
+        p.setBrush(radial(c.x() - 62, c.y() - 4, 52, (0, light), (0.6, gold), (1, dark)))
+        p.drawEllipse(QPointF(c.x() - 56, c.y() + 6), 42, 34)
+        # tufts of fur along the back
+        p.setPen(QPen(alpha(dark, 110), 1.4, Qt.SolidLine, Qt.RoundCap))
+        rng = random.Random(7)
+        for _ in range(34):
+            a = rng.uniform(math.pi * 1.05, math.pi * 1.95)
+            r = rng.uniform(0.6, 0.95)
+            x = c.x() - 22 + math.cos(a) * 80 * r
+            y = c.y() - 4 + math.sin(a) * 48 * r
+            p.drawLine(QPointF(x, y), QPointF(x - 5, y + 6))
+        p.setPen(Qt.NoPen)
+        p.restore()
+        # front legs stretched out, paws together
+        for dy, shade in ((22, gold), (32, light)):
+            p.setBrush(vgrad(c.y() + dy - 9, c.y() + dy + 9, shade, gold))
+            p.drawRoundedRect(QRectF(c.x() + 30, c.y() + dy - 9, 76, 17), 8, 8)
+            p.setBrush(light)
+            p.drawEllipse(QPointF(c.x() + 104, c.y() + dy), 11, 9)
+        # head resting on the paws: broad skull, short muzzle
+        head = QPointF(c.x() + 66, c.y() - 4)
+        p.setBrush(radial(head.x() - 10, head.y() - 16, 54, (0, light), (0.6, gold), (1, dark)))
+        p.drawEllipse(head, 40, 34)
+        muzzle = QPainterPath()
+        muzzle.moveTo(head.x() + 14, head.y() - 4)
+        muzzle.cubicTo(head.x() + 40, head.y() - 6, head.x() + 54, head.y() + 6, head.x() + 52, head.y() + 18)
+        muzzle.cubicTo(head.x() + 44, head.y() + 30, head.x() + 18, head.y() + 30, head.x() + 8, head.y() + 22)
+        muzzle.closeSubpath()
+        p.setBrush(vgrad(head.y() - 6, head.y() + 30, light, gold))
+        p.drawPath(muzzle)
+        p.setBrush(rgb(34, 24, 22))
+        p.drawEllipse(QPointF(head.x() + 50, head.y() + 8), 7, 5.5)
+        p.setBrush(rgb(255, 255, 255, 80))
+        p.drawEllipse(QPointF(head.x() + 48, head.y() + 6), 2, 1.4)
+        p.setPen(QPen(rgb(90, 50, 24), 1.4, Qt.SolidLine, Qt.RoundCap))
+        p.drawArc(QRectF(head.x() + 30, head.y() + 16, 20, 10), 200 * 16, 120 * 16)  # mouth
+        p.setPen(QPen(rgb(60, 34, 18), 2, Qt.SolidLine, Qt.RoundCap))
+        p.drawArc(QRectF(head.x() + 8, head.y() - 12, 18, 9), 200 * 16, 140 * 16)  # closed eye
+        p.setPen(Qt.NoPen)
+        # big feathery ear
+        ear = QPainterPath()
+        ear.moveTo(head.x() - 18, head.y() - 26)
+        ear.cubicTo(head.x() - 46, head.y() - 18, head.x() - 44, head.y() + 26, head.x() - 22, head.y() + 34)
+        ear.cubicTo(head.x() - 4, head.y() + 22, head.x() - 2, head.y() - 16, head.x() - 18, head.y() - 26)
+        p.setBrush(vgrad(head.y() - 26, head.y() + 34, gold, deep))
+        p.drawPath(ear)
+        p.setPen(QPen(alpha(deep, 140), 1.2))
+        for k in range(5):
+            p.drawLine(QPointF(head.x() - 30 + k * 3, head.y() + 4 + k * 4), QPointF(head.x() - 34 + k * 3, head.y() + 16 + k * 4))
+        p.restore()
 
     def _paint_lighting(self, p: QPainter, target: QRectF, s: float, ox: float, oy: float) -> None:
         l, w = self.outside.light, self.outside.weather
@@ -569,7 +779,6 @@ class InsideScene:
         lm.fill(QColor(10, 5, 3, int(248 * darkness)))
         lp = QPainter(lm)
         lp.setRenderHint(QPainter.Antialiasing)
-        # Same mapping as the scene, but onto the small light map
         lp.scale(320 / target.width(), 180 / target.height())
         lp.translate(ox - target.x(), oy - target.y())
         lp.scale(s, s)
@@ -580,32 +789,35 @@ class InsideScene:
             lp.setBrush(radial(x, y, r, (0, rgb(0, 0, 0, 255 * min(1, strength))), (0.45, rgb(0, 0, 0, 150 * min(1, strength))), (1, rgb(0, 0, 0, 0))))
             lp.drawEllipse(QPointF(x, y), r, r)
 
-        fx = (FIREBOX_LEFT + FIREBOX_RIGHT) / 2
-        light(fx, 620, 760 * (0.95 + 0.05 * f), 0.62 * f)
-        light(fx, 640, 300, 0.9)
-        light(fx, 770, 380, 0.6 * f)
+        fx, fy = FIREBOX.center().x(), FIREBOX.bottom() - 40
+        light(fx, fy, 780 * (0.95 + 0.05 * f), 0.62 * f)
+        light(fx, fy + 20, 300, 0.9)
+        light(fx, HEARTH_FRONT + 40, 400, 0.6 * f)
         if self.lamp_on():
-            light(LAMP_FLAME.x(), LAMP_FLAME.y(), 430, 0.7)
-            light(clock.CX, 330, 210, 0.55)  # the lamp catching the clock face
+            light(LAMP.x(), LAMP.y(), 520, 0.72)
+            light(LAMP.x() + 160, LAMP.y() + 300, 360, 0.4)
         for c in CANDLES:
             light(c.x(), c.y(), 150, 0.45)
-        light(GLASS.center().x(), GLASS.center().y(), 560, 0.85 * l.daylight * (1 - 0.3 * w.clouds) + flash)
+        light(TABLE_CANDLE.x(), TABLE_CANDLE.y(), 160, 0.45)
+        light(clock.CX, 360, 230, 0.5)  # a soft light kept on the clock face
+        light(WINDOW.center().x(), WINDOW.center().y(), 700, 0.85 * l.daylight * (1 - 0.3 * w.clouds) + flash)
         lp.end()
         p.save()
         p.setRenderHint(QPainter.SmoothPixmapTransform)
         p.drawImage(target, lm)
         p.restore()
 
-        # Warm firelight, added on top
+        # warm firelight and lamplight, added on top
         p.save()
         p.translate(ox, oy)
         p.scale(s, s)
         p.setCompositionMode(QPainter.CompositionMode_Screen)
         p.setPen(Qt.NoPen)
         warm = 0.45 + 0.55 * darkness
-        p.setBrush(radial(fx, 600, 900, (0, rgb(255, 120, 40, 110 * f * warm)), (0.35, rgb(255, 100, 30, 45 * f * warm)), (1, rgb(0, 0, 0, 0))))
-        p.drawEllipse(QPointF(fx, 600), 900, 900)
+        p.setBrush(radial(fx, fy, 900, (0, rgb(255, 120, 40, 110 * f * warm)), (0.35, rgb(255, 100, 30, 45 * f * warm)), (1, rgb(0, 0, 0, 0))))
+        p.drawEllipse(QPointF(fx, fy), 900, 900)
         if self.lamp_on():
-            p.setBrush(radial(LAMP_FLAME.x(), LAMP_FLAME.y(), 380, (0, rgb(255, 170, 80, 70)), (1, rgb(0, 0, 0, 0))))
-            p.drawEllipse(LAMP_FLAME, 380, 380)
+            p.setBrush(radial(LAMP.x(), LAMP.y(), 420, (0, rgb(255, 170, 80, 80)), (1, rgb(0, 0, 0, 0))))
+            p.drawEllipse(LAMP, 420, 420)
         p.restore()
+
