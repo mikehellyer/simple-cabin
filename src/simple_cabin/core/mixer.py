@@ -11,6 +11,7 @@ with render(), saying when its first frame will be heard.
 """
 from __future__ import annotations
 
+import threading
 import wave
 from dataclasses import dataclass
 from pathlib import Path
@@ -57,37 +58,50 @@ class Mixer:
         self._sounds: dict[str, np.ndarray] = {}
         self._voices: list[_Voice] = []
         self.muted = False
+        # The audio thread renders while the rest of the app starts and
+        # stops sounds, so every change goes through this lock.
+        self._lock = threading.Lock()
 
     # --- sounds
 
     def add(self, name: str, samples: np.ndarray) -> None:
-        self._sounds[name] = samples
+        with self._lock:
+            self._sounds[name] = samples
 
     def has(self, name: str) -> bool:
-        return name in self._sounds
+        with self._lock:
+            return name in self._sounds
 
     # --- playing
 
     def play(self, name: str, at: float = 0.0, loop: bool = False) -> None:
         """Start a sound at wall-clock time at (0: as soon as possible)."""
-        if loop and self.is_playing(name):
-            return
-        self._voices.append(_Voice(name, at, loop))
+        with self._lock:
+            if loop and any(v.name == name for v in self._voices):
+                return
+            self._voices.append(_Voice(name, at, loop))
 
     def stop(self, name: str) -> None:
-        self._voices = [v for v in self._voices if v.name != name]
+        with self._lock:
+            self._voices = [v for v in self._voices if v.name != name]
 
     def stop_matching(self, test: Callable[[str], bool]) -> None:
-        self._voices = [v for v in self._voices if not test(v.name)]
+        with self._lock:
+            self._voices = [v for v in self._voices if not test(v.name)]
 
     def is_playing(self, name: str) -> bool:
-        return any(v.name == name for v in self._voices)
+        with self._lock:
+            return any(v.name == name for v in self._voices)
 
     # --- mixing
 
     def render(self, frames: int, start_time: float) -> bytes:
         """The next frames of sound as 16-bit stereo, the first of which will
         be heard at start_time (wall clock)."""
+        with self._lock:
+            return self._render(frames, start_time)
+
+    def _render(self, frames: int, start_time: float) -> bytes:
         out = np.zeros((frames, 2), np.float32)
         end_time = start_time + frames / self.rate
         keep = []

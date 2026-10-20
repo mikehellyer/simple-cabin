@@ -91,6 +91,14 @@ resolution and 20 fps). Settings → Views → Graphics can change that. If the
 screen still blanks, turn off *Screen Blanking* in Raspberry Pi
 Configuration → Display.
 
+## If a remote control doesn't work
+
+Run `simple-cabin --remote-test` in a terminal (on the Pi). It checks
+HDMI-CEC (registers with the TV, lists what the TV reports, then shows
+which remote buttons the TV actually sends while you press them for 15
+seconds) and the phone remote (this machine's addresses, the port, and
+whether the page answers on each address).
+
 ## If you can't hear something
 
 Run `simple-cabin --sound-test` in a terminal. It says which audio output

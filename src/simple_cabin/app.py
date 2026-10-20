@@ -63,11 +63,9 @@ def sound_test() -> int:
     from PySide6.QtCore import QCoreApplication, QTimer
 
     from simple_cabin.gui.audio import AudioEngine
-    from simple_cabin.gui.workers import BackgroundRunner
 
     app = QCoreApplication(sys.argv)
-    runner = BackgroundRunner()
-    audio = AudioEngine(Path(user_cache_dir("Simple-Cabin")) / "sounds", runner)
+    audio = AudioEngine(Path(user_cache_dir("Simple-Cabin")) / "sounds")
     audio.set_volumes(80, 70, 22, 75)
 
     def say(text: str) -> None:
@@ -80,8 +78,8 @@ def sound_test() -> int:
     steps = [
         (5000, lambda: (say("  …now a quarter-hour chime"), audio._play_chime("quarter_15"))),
         (9000, lambda: (say("  …now distant thunder"), audio.thunder(0))),
-        (5000, lambda: say(f"  done: {audio.status}; sink state now {audio._state_name()}, error {audio._sink.error().name if audio._sink else '-'}")),
-        (300, lambda: (audio.shutdown(), runner.shutdown(3000), app.quit())),
+        (5000, lambda: say(f"  done: {audio.status}; sink now {audio.state_text()}")),
+        (300, lambda: (audio.shutdown(), app.quit())),
     ]
     t = 0
     for delay, fn in steps:
@@ -96,6 +94,10 @@ def main() -> int:
         return self_test()
     if "--sound-test" in sys.argv:
         return sound_test()
+    if "--remote-test" in sys.argv:
+        from simple_cabin.core import remote_check
+
+        return remote_check.main()
 
     # Qt is imported only now, so --self-test runs even where there's no
     # display or graphics libraries (the release workflow's build machines).

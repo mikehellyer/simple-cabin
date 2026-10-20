@@ -176,7 +176,15 @@ class SettingsDialog(QDialog):
         where = QLabel()
         where.setTextInteractionFlags(Qt.TextSelectableByMouse)
         if remote_url:
-            where.setText(f"On your phone, open <b>{remote_url}</b><br>or scan the code (also shown on screen with Q, or the TV remote's blue button).")
+            import socket
+
+            from simple_cabin.core.remote_check import all_addresses
+
+            port = remote_url.rsplit(":", 1)[-1].strip("/")
+            others = [f"http://{a}:{port}/" for a in all_addresses() if a not in remote_url]
+            others.append(f"http://{socket.gethostname()}.local:{port}/")
+            where.setText(f"On your phone, open <b>{remote_url}</b><br>or scan the code (also shown on screen with Q, "
+                          f"or the TV remote's blue button).<br><span style='color:gray'>Also: {' · '.join(others)}</span>")
             where.setWordWrap(True)
             rl.addRow("", where)
             code = QLabel()
