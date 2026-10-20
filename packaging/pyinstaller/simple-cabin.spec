@@ -41,6 +41,7 @@ a = Analysis(
     binaries=[],
     datas=[
         (str(src / "simple_cabin" / "gui" / "resources" / "icon.png"), "simple_cabin/gui/resources"),
+        (str(src / "simple_cabin" / "sounds" / "*.wav"), "simple_cabin/sounds"),
     ],
     hiddenimports=["numpy"],
     hookspath=[],

@@ -1,8 +1,9 @@
 """Every sound in the cabin, synthesised with numpy and saved as WAV files.
 
-Nothing is shipped as a recording: the clock's tick and tock, the fire's
-crackle and the Westminster chimes are all made here the first time
-they're needed, then kept in the cache folder. Bump SYNTH_VERSION after
+The fire's crackle, the weather and the Westminster chimes are all made
+here the first time they're needed, then kept in the cache folder. The
+clock's tick-tock can be synthesised too (VOICES), but by default it's a
+real recording, cut by tools/extract_recorded_tick.py into sounds/. Bump SYNTH_VERSION after
 changing how anything sounds, so old files get remade.
 """
 from __future__ import annotations
@@ -81,7 +82,23 @@ VOICES = {
         "drive": 2.0,
     },
 }
-DEFAULT_VOICE = "classic"
+DEFAULT_VOICE = "classic"  # for the synthesised voices
+
+# The real clock: four beats cut from a recording, played in turn. It goes
+# strong-weak-strong-weak, and its two strong beats differ a little.
+RECORDED = "recorded"
+RECORDED_BEATS = ["tick_recorded", "tock_recorded", "tick2_recorded", "tock2_recorded"]
+RECORDED_DIR = Path(__file__).resolve().parent.parent / "sounds"
+DEFAULT_CLOCK_VOICE = RECORDED
+
+VOICE_LABELS = {RECORDED: "Recorded — a real grandfather clock", **{k: v["label"] for k, v in VOICES.items()}}
+
+
+def beat_names(voice: str) -> list[str]:
+    """The sounds the clock plays on successive seconds, in order."""
+    if voice == RECORDED:
+        return list(RECORDED_BEATS)
+    return [f"tick_{voice}", f"tock_{voice}"]
 
 
 def _room_impulse(seconds: float, seed: int) -> np.ndarray:
@@ -286,6 +303,8 @@ def write_wav(path: Path, samples: np.ndarray) -> None:
 
 
 def render(name: str) -> np.ndarray:
+    if name in RECORDED_BEATS:
+        raise KeyError(f"{name} is a recording, not synthesised")
     if name.startswith(("tick", "tock")):
         # "tick" / "tock", or with a voice: "tick_bold"
         kind, _, voice = name.partition("_")
@@ -312,6 +331,8 @@ def remove_stale(directory: Path) -> None:
 
 def ensure_sound(name: str, directory: Path) -> Path:
     """The WAV file for a sound, making it first if it isn't cached yet."""
+    if name in RECORDED_BEATS:
+        return RECORDED_DIR / f"{name}.wav"
     folder = directory / f"v{SYNTH_VERSION}"
     path = folder / f"{name}.wav"
     if not path.exists():

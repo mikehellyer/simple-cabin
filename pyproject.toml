@@ -23,6 +23,7 @@ where = ["src"]
 
 [tool.setuptools.package-data]
 "simple_cabin.gui" = ["resources/*.png"]
+"simple_cabin" = ["sounds/*.wav"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

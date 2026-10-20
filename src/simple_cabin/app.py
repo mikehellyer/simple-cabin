@@ -15,6 +15,12 @@ def self_test() -> int:
     except Exception:
         checks["sound synthesis"] = False
     try:
+        from simple_cabin.core import synth
+
+        checks["recorded clock"] = all((synth.RECORDED_DIR / f"{n}.wav").is_file() for n in synth.RECORDED_BEATS)
+    except Exception:
+        checks["recorded clock"] = False
+    try:
         from simple_cabin.core import weather
 
         checks["weather parsing"] = weather.condition_for(63) == weather.RAIN

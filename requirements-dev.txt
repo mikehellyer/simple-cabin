@@ -2,3 +2,4 @@
 pytest
 pyinstaller
 Pillow
+miniaudio

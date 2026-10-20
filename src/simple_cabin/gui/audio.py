@@ -31,7 +31,7 @@ class AudioEngine(QObject):
         self._rain = 0.0
         self._play_when_ready: Optional[str] = None
         self._next_second = 0
-        self._voice = synth.DEFAULT_VOICE
+        self._voice = synth.DEFAULT_CLOCK_VOICE
 
         self._tick_timer = QTimer(self)
         self._tick_timer.setTimerType(Qt.PreciseTimer)
@@ -44,7 +44,7 @@ class AudioEngine(QObject):
         voice = self._voice
 
         def make_basics():
-            names = (f"tick_{voice}", f"tock_{voice}", "fire", "rain", "thunder")
+            names = (*synth.beat_names(voice), "fire", "rain", "thunder")
             synth.remove_stale(self._dir)
             return {name: synth.ensure_sound(name, self._dir) for name in names}
 
@@ -94,9 +94,9 @@ class AudioEngine(QObject):
         if voice == self._voice:
             return
         self._voice = voice
-        if self._effects:  # started already: load the new pair now
-            self._prepare(f"tick_{voice}")
-            self._prepare(f"tock_{voice}")
+        if self._effects:  # started already: load the new beats now
+            for name in synth.beat_names(voice):
+                self._prepare(name)
 
     def set_quarter_chimes(self, enabled: bool) -> None:
         self._quarters = enabled
@@ -157,8 +157,9 @@ class AudioEngine(QObject):
         self._schedule_next_second()
 
         # The pendulum (see clock.pendulum_angle) ends its swing on the
-        # second: one side on even seconds, the other on odd.
-        effect = self._effects.get(f"{'tick' if second % 2 == 0 else 'tock'}_{self._voice}")
+        # second: one side on even seconds (tick), the other on odd (tock).
+        beats = synth.beat_names(self._voice)
+        effect = self._effects.get(beats[second % len(beats)])
         if effect is not None:
             effect.play()
 

@@ -37,10 +37,15 @@ you're offline.
 
 ## Sound
 
-No recordings are shipped. The tick and tock, the fire, the rain, the thunder
-and the chimes are all synthesised with numpy the first time they're needed,
-then cached as WAV files in the app's cache folder. The fire sits well under
-the clock by default. Settings has separate sliders for each.
+The clock's tick-tock is a real grandfather clock: four beats (strong, weak,
+strong, weak) cut from a recording by `tools/extract_recorded_tick.py` and
+kept in `src/simple_cabin/sounds/`. Settings → Clock voice also offers three
+synthesised voices (Classic, Bold, Deep).
+
+Everything else (the fire, the rain, the thunder and the Westminster chimes)
+is synthesised with numpy the first time it's needed, then cached as WAV
+files in the app's cache folder. The fire sits well under the clock by
+default. Settings has separate sliders for each.
 
 ## Running from source
 

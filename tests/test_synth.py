@@ -1,4 +1,5 @@
 import wave
+from pathlib import Path
 
 import numpy as np
 
@@ -53,3 +54,16 @@ def test_ensure_sound_writes_a_cached_wav(tmp_path):
     assert not (tmp_path / "v1").exists() and path.exists()
     mtime = path.stat().st_mtime_ns
     assert synth.ensure_sound("tick", tmp_path).stat().st_mtime_ns == mtime  # not remade
+
+
+def test_recorded_voice_is_four_packaged_beats():
+    beats = synth.beat_names(synth.RECORDED)
+    assert beats == synth.RECORDED_BEATS and len(beats) == 4
+    for name in beats:
+        path = synth.ensure_sound(name, Path("/nonexistent-cache"))  # never synthesised or cached
+        assert path.is_file()
+        with wave.open(str(path)) as w:
+            assert w.getframerate() == synth.RATE and w.getnchannels() == 2
+            assert w.getnframes() < synth.RATE  # each beat finishes well inside its second
+    assert synth.beat_names("bold") == ["tick_bold", "tock_bold"]
+    assert synth.DEFAULT_CLOCK_VOICE in synth.VOICE_LABELS

@@ -24,7 +24,7 @@ def test_bad_values_are_ignored_or_clamped(tmp_path):
     }))
     s = SettingsStore(path).settings
     assert s.temperature_unit == "C"
-    assert s.clock_voice == "classic"
+    assert s.clock_voice == "recorded"
     assert s.master_volume == 100
     assert s.latitude == 12.0
     assert s.muted is False

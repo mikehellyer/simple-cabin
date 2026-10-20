@@ -102,8 +102,8 @@ class SettingsDialog(QDialog):
             self._sliders[name] = slider
             sl.addRow(label, slider)
         self._voice = QComboBox()
-        for key, recipe in synth.VOICES.items():
-            self._voice.addItem(recipe["label"], key)
+        for key, label in synth.VOICE_LABELS.items():
+            self._voice.addItem(label, key)
         self._voice.setCurrentIndex(max(0, self._voice.findData(settings.clock_voice)))
         self._voice.currentIndexChanged.connect(lambda: self.voice_changed.emit(self._voice.currentData()))
         sl.addRow("Clock voice", self._voice)
