@@ -1,0 +1,185 @@
+"""Settings: where the weather is for, units, sound levels and views."""
+from __future__ import annotations
+
+from PySide6.QtCore import Qt, Signal
+from PySide6.QtWidgets import (
+    QButtonGroup,
+    QCheckBox,
+    QComboBox,
+    QDialog,
+    QDialogButtonBox,
+    QFormLayout,
+    QGroupBox,
+    QHBoxLayout,
+    QLabel,
+    QLineEdit,
+    QPushButton,
+    QRadioButton,
+    QSlider,
+    QSpinBox,
+    QVBoxLayout,
+)
+
+from simple_cabin.core import weather as wx
+from simple_cabin.core.settings import Settings
+from simple_cabin.gui.workers import BackgroundRunner
+
+
+class SettingsDialog(QDialog):
+    volumes_changed = Signal(int, int, int, int)  # live preview while sliding
+    play_chime = Signal()
+
+    def __init__(self, settings: Settings, runner: BackgroundRunner, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Settings")
+        self.setMinimumWidth(480)
+        self._runner = runner
+        self._place = (
+            wx.Location(settings.location_name, settings.latitude, settings.longitude)
+            if settings.location_mode == "manual" else None
+        )
+        layout = QVBoxLayout(self)
+
+        # Location
+        where = QGroupBox("Weather location")
+        wl = QVBoxLayout(where)
+        self._auto = QRadioButton("Find my location automatically (from my internet address)")
+        self._manual = QRadioButton("Use a place I choose:")
+        group = QButtonGroup(self)
+        group.addButton(self._auto)
+        group.addButton(self._manual)
+        wl.addWidget(self._auto)
+        wl.addWidget(self._manual)
+        row = QHBoxLayout()
+        self._query = QLineEdit()
+        self._query.setPlaceholderText("Town or city, e.g. Keswick")
+        self._query.returnPressed.connect(self._search)
+        search = QPushButton("Search")
+        search.clicked.connect(self._search)
+        row.addWidget(self._query, 1)
+        row.addWidget(search)
+        wl.addLayout(row)
+        self._results = QComboBox()
+        self._results.currentIndexChanged.connect(self._on_result_chosen)
+        wl.addWidget(self._results)
+        self._place_label = QLabel()
+        self._place_label.setStyleSheet("color: gray;")
+        wl.addWidget(self._place_label)
+        layout.addWidget(where)
+        (self._manual if self._place else self._auto).setChecked(True)
+        self._results.hide()
+        self._show_place()
+
+        # Units
+        units = QGroupBox("Units and clock")
+        ul = QFormLayout(units)
+        self._temp = QComboBox()
+        self._temp.addItem("°C", "C")
+        self._temp.addItem("°F", "F")
+        self._temp.setCurrentIndex(self._temp.findData(settings.temperature_unit))
+        self._wind = QComboBox()
+        self._wind.addItem("mph", "mph")
+        self._wind.addItem("km/h", "kmh")
+        self._wind.setCurrentIndex(self._wind.findData(settings.wind_unit))
+        self._clock24 = QCheckBox("24-hour clock on the weather screen")
+        self._clock24.setChecked(settings.clock_24h)
+        ul.addRow("Temperature", self._temp)
+        ul.addRow("Wind", self._wind)
+        ul.addRow("", self._clock24)
+        layout.addWidget(units)
+
+        # Sound
+        sound = QGroupBox("Sound")
+        sl = QFormLayout(sound)
+        self._sliders = {}
+        for name, label in (("master_volume", "Overall"), ("tick_volume", "Clock tick"), ("fire_volume", "Fire and rain"), ("chime_volume", "Chimes")):
+            slider = QSlider(Qt.Horizontal)
+            slider.setRange(0, 100)
+            slider.setValue(getattr(settings, name))
+            slider.valueChanged.connect(self._emit_volumes)
+            self._sliders[name] = slider
+            sl.addRow(label, slider)
+        self._quarters = QCheckBox("Chime the quarter hours too (Westminster)")
+        self._quarters.setChecked(settings.quarter_chimes)
+        sl.addRow("", self._quarters)
+        hear = QPushButton("Play the hour chime")
+        hear.clicked.connect(self.play_chime)
+        sl.addRow("", hear)
+        layout.addWidget(sound)
+
+        # Views
+        views = QGroupBox("Views")
+        vl = QFormLayout(views)
+        self._auto_switch = QCheckBox("Step outside now and then, then come back in")
+        self._auto_switch.setChecked(settings.auto_switch_views)
+        self._inside_minutes = QSpinBox()
+        self._inside_minutes.setRange(1, 60)
+        self._inside_minutes.setSuffix(" minutes")
+        self._inside_minutes.setValue(settings.inside_minutes)
+        self._outside_seconds = QSpinBox()
+        self._outside_seconds.setRange(10, 600)
+        self._outside_seconds.setSuffix(" seconds")
+        self._outside_seconds.setValue(settings.outside_seconds)
+        vl.addRow("", self._auto_switch)
+        vl.addRow("Stay inside for", self._inside_minutes)
+        vl.addRow("Stay outside for", self._outside_seconds)
+        layout.addWidget(views)
+
+        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+
+    def _emit_volumes(self) -> None:
+        s = self._sliders
+        self.volumes_changed.emit(s["master_volume"].value(), s["tick_volume"].value(), s["fire_volume"].value(), s["chime_volume"].value())
+
+    def _search(self) -> None:
+        query = self._query.text().strip()
+        if not query:
+            return
+        self._manual.setChecked(True)
+        self._place_label.setText("Searching…")
+        self._runner.run(lambda: wx.search_places(query), self._on_results, lambda error: self._on_results([]))
+
+    def _on_results(self, places: list) -> None:
+        self._results.blockSignals(True)
+        self._results.clear()
+        for place in places:
+            self._results.addItem(place.name, place)
+        self._results.blockSignals(False)
+        self._results.setVisible(bool(places))
+        if places:
+            self._results.setCurrentIndex(0)
+            self._on_result_chosen(0)
+        else:
+            self._place_label.setText("No places found (or no connection) — try another spelling")
+
+    def _on_result_chosen(self, index: int) -> None:
+        place = self._results.itemData(index)
+        if place is not None:
+            self._place = place
+            self._show_place()
+
+    def _show_place(self) -> None:
+        if self._place:
+            self._place_label.setText(f"Chosen: {self._place.name}  ({self._place.latitude:.2f}, {self._place.longitude:.2f})")
+        else:
+            self._place_label.setText("No place chosen yet — search above")
+
+    def values(self) -> dict:
+        manual = self._manual.isChecked() and self._place is not None
+        values = {
+            "location_mode": "manual" if manual else "auto",
+            "temperature_unit": self._temp.currentData(),
+            "wind_unit": self._wind.currentData(),
+            "clock_24h": self._clock24.isChecked(),
+            "quarter_chimes": self._quarters.isChecked(),
+            "auto_switch_views": self._auto_switch.isChecked(),
+            "inside_minutes": self._inside_minutes.value(),
+            "outside_seconds": self._outside_seconds.value(),
+        }
+        if manual:
+            values.update(location_name=self._place.name, latitude=self._place.latitude, longitude=self._place.longitude)
+        values.update({name: slider.value() for name, slider in self._sliders.items()})
+        return values

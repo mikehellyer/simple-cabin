@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Simple-Cabin
+Comment=A cosy log cabin with a ticking grandfather clock and live weather
+Exec=/opt/simple-cabin/Simple-Cabin
+Icon=simple-cabin
+Terminal=false
+Categories=Utility;Clock;
