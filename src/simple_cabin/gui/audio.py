@@ -44,7 +44,7 @@ class AudioEngine(QObject):
         voice = self._voice
 
         def make_basics():
-            names = (*synth.beat_names(voice), "fire", "rain", "thunder")
+            names = (*synth.beat_names(voice), "fire", "rain", "thunder", "firework")
             synth.remove_stale(self._dir)
             return {name: synth.ensure_sound(name, self._dir) for name in names}
 
@@ -109,7 +109,7 @@ class AudioEngine(QObject):
             part = self._fire
         elif name == "rain":
             part = self._fire * 0.8 * self._rain
-        elif name == "thunder":
+        elif name in ("thunder", "firework"):
             part = self._chime * 0.6
         else:
             part = self._chime
@@ -143,6 +143,11 @@ class AudioEngine(QObject):
 
     def thunder(self, delay_ms: int) -> None:
         effect = self._effects.get("thunder")
+        if effect is not None:
+            QTimer.singleShot(delay_ms, effect.play)
+
+    def firework(self, delay_ms: int) -> None:
+        effect = self._effects.get("firework")
         if effect is not None:
             QTimer.singleShot(delay_ms, effect.play)
 

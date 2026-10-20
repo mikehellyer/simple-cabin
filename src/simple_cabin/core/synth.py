@@ -204,6 +204,24 @@ def thunder(seed: int = 9) -> np.ndarray:
     return _normalise(out, 0.85)
 
 
+def firework(seed: int = 21) -> np.ndarray:
+    """A distant firework: a dull boom, then a fizz of crackles."""
+    rng = np.random.default_rng(seed)
+    seconds = 2.5
+    n = int(seconds * RATE)
+    t = np.arange(n) / RATE
+    boom = _normalise(_filtered(rng.standard_normal(n), lambda f: (f > 25) / (1 + (f / 140) ** 2)), 1.0)
+    boom *= np.minimum(1.0, t / 0.004) * np.exp(-t / 0.35)
+    crackle = np.zeros(n)
+    for when in rng.uniform(0.15, 1.6, 90):
+        length = int(0.006 * RATE)
+        tt = np.arange(length) / RATE
+        burst = np.diff(rng.standard_normal(length) * np.exp(-tt / 0.0012), prepend=0.0)
+        i = int(when * RATE)
+        crackle[i : i + length] += rng.uniform(0.2, 1.0) * burst[: n - i] * np.exp(-when / 1.2)
+    return _normalise(boom + 0.35 * _normalise(crackle, 1.0), 0.85)
+
+
 # --- the chimes
 
 
@@ -271,6 +289,8 @@ def render(name: str) -> np.ndarray:
         return tick(kind == "tock", voice or DEFAULT_VOICE)
     if name == "rain":
         return rain_loop()
+    if name == "firework":
+        return firework()
     if name == "thunder":
         return thunder()
     if name in chimes.all_keys():

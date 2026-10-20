@@ -18,7 +18,7 @@ from PySide6.QtGui import QColor, QImage, QPainter, QPainterPath, QPen, QPolygon
 
 from simple_cabin.gui import textures as tx
 from simple_cabin.gui.paint import H, W, alpha, hgrad, mix, poly, radial, rgb, scaled, vgrad, wobble
-from simple_cabin.gui.scenes import clock
+from simple_cabin.gui.scenes import clock, decorations
 from simple_cabin.gui.scenes.fire import Fire
 from simple_cabin.gui.scenes.outside import WINDOW_VIEW, OutsideScene
 from simple_cabin.gui.scenes.painting import canoe_painting
@@ -62,6 +62,7 @@ class InsideScene:
         self.outside = outside
         self.fire = Fire(FIREBOX.center().x(), FIREBOX.bottom() - 16, 210)
         self.t = 0.0
+        self.decoration: str | None = None  # seasonal decorations (see core.seasons)
         self._cache_key = None
         self._cache: QImage | None = None
         self._drops: list[list[float]] = []
@@ -134,6 +135,7 @@ class InsideScene:
         self.fire.paint(p)
         p.restore()
         self._paint_small_flames(p)
+        decorations.inside_dynamic(p, self.decoration, self.t)
         self._paint_dog(p)
         clock.paint_moving(p, now, now_seconds, glow=self.fire.flicker() * (1 - self.outside.light.daylight * 0.8))
         p.restore()
@@ -145,7 +147,7 @@ class InsideScene:
     def prerender(self, target: QRectF, dpr: float) -> QImage:
         """The room's cached image for this size, rendering it if need be
         (safe to call from a background thread while nothing else paints)."""
-        key = (int(target.width()), int(target.height()), dpr, round(self.outside.moon_phase, 3))
+        key = (int(target.width()), int(target.height()), dpr, round(self.outside.moon_phase, 3), self.decoration)
         if key != self._cache_key:
             s = fit_scale(target)
             ox = (target.width() - W * s) / 2
@@ -177,11 +179,15 @@ class InsideScene:
         self._paint_window_frame(p)
         self._paint_floor(p)
         self._paint_fireplace(p)
+        decorations.inside_static(p, self.decoration, "mantel")
         self._paint_lamp(p)
-        self._paint_armchair(p)
+        if not decorations.hides_armchair(self.decoration):
+            self._paint_armchair(p)
+        decorations.inside_static(p, self.decoration, "back")
         self._paint_rug(p)
         self._paint_log_bucket(p)
         self._paint_coffee_table(p)
+        decorations.inside_static(p, self.decoration, "table")
         self._paint_sofa(p)
         clock.paint_case(p, self.outside.moon_phase)
         p.end()
@@ -793,6 +799,8 @@ class InsideScene:
         for c in CANDLES:
             light(c.x(), c.y(), 150, 0.45)
         light(TABLE_CANDLE.x(), TABLE_CANDLE.y(), 160, 0.45)
+        for x, y, r, strength in decorations.inside_lights(self.decoration):
+            light(x, y, r, strength)
         light(clock.CX, 360, 230, 0.5)  # a soft light kept on the clock face
         light(WINDOW.center().x(), WINDOW.center().y(), 700, 0.85 * l.daylight * (1 - 0.3 * w.clouds) + flash)
         lp.end()

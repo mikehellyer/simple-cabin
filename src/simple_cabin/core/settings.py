@@ -34,6 +34,8 @@ class Settings:
     auto_switch_views: bool = True
     # Stop the screensaver, screen blanking and lock while the cabin is open.
     keep_awake: bool = True
+    # Halloween, Christmas, Easter and New Year decorations, in season.
+    decorations: bool = True
     # "auto" picks "light" on a Raspberry Pi: drawn at lower resolution and
     # frame rate, which a Pi can keep up with.
     graphics: str = "auto"

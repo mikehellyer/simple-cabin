@@ -129,6 +129,8 @@ class SettingsDialog(QDialog):
         self._outside_seconds.setSuffix(" seconds")
         self._outside_seconds.setValue(settings.outside_seconds)
         vl.addRow("", self._auto_switch)
+        self._decorations = QCheckBox("Seasonal decorations (Halloween, Christmas, Easter, New Year)")
+        self._decorations.setChecked(settings.decorations)
         self._keep_awake = QCheckBox("Keep the screen awake (no screensaver or lock) while open")
         self._keep_awake.setChecked(settings.keep_awake)
         self._graphics = QComboBox()
@@ -137,6 +139,7 @@ class SettingsDialog(QDialog):
         self._graphics.setCurrentIndex(max(0, self._graphics.findData(settings.graphics)))
         vl.addRow("Stay inside for", self._inside_minutes)
         vl.addRow("Stay outside for", self._outside_seconds)
+        vl.addRow("", self._decorations)
         vl.addRow("", self._keep_awake)
         vl.addRow("Graphics", self._graphics)
         layout.addWidget(views)
@@ -194,6 +197,7 @@ class SettingsDialog(QDialog):
             "clock_voice": self._voice.currentData(),
             "auto_switch_views": self._auto_switch.isChecked(),
             "keep_awake": self._keep_awake.isChecked(),
+            "decorations": self._decorations.isChecked(),
             "graphics": self._graphics.currentData(),
             "inside_minutes": self._inside_minutes.value(),
             "outside_seconds": self._outside_seconds.value(),

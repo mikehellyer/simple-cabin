@@ -19,7 +19,7 @@ from PySide6.QtGui import QColor, QImage, QPainter, QPainterPath, QPen
 from simple_cabin.core.sky import Light
 from simple_cabin.core.weather import SceneWeather
 from simple_cabin.gui.paint import H, W, alpha, mix, poly, radial, rgb, scaled, soft_blob, vgrad, wobble
-from simple_cabin.gui.scenes import lodge
+from simple_cabin.gui.scenes import decorations, lodge
 from simple_cabin.gui import textures as tx
 from simple_cabin.gui.scenes.trees import draw_boulder, draw_fern, draw_ponderosa, draw_shrub, tint
 
@@ -41,6 +41,10 @@ class OutsideScene:
         self.light = Light(1.0, 0.0, 0.5, -1.0, False)
         self.moon_phase = 0.3
         self.fire_glow = 1.0  # set by the inside scene's fire, for the windows
+        self.decoration: str | None = None  # seasonal decorations (see core.seasons)
+        self.fireworks_on = False
+        self.fireworks = decorations.Fireworks()
+        self.bangs = 0  # fireworks that have burst since the stage last asked (for the sound)
         self.t = 0.0
         self._rng = random.Random(1)
         self._caches: dict = {}
@@ -72,7 +76,7 @@ class OutsideScene:
         l = self.light
         return (
             round(l.daylight * 40) / 40, round(l.golden * 20) / 20, round(l.sun_progress, 2), round(l.night_progress, 2),
-            l.morning, astuple(self.weather), round(self.moon_phase, 2),
+            l.morning, astuple(self.weather), round(self.moon_phase, 2), self.decoration,
         )
 
     @property
@@ -175,6 +179,8 @@ class OutsideScene:
             s[0] += drift * (6 + w.wind * 70) * dt * (0.5 + s[2] * 0.25) + math.sin(self.t + s[3] * 5) * 4 * dt
         self._smoke = [s for s in self._smoke if s[2] < 7.0]
 
+        self.bangs += self.fireworks.step(dt, self.fireworks_on)
+
         # Lightning
         if self._flash > 0:
             self._flash -= dt
@@ -261,8 +267,16 @@ class OutsideScene:
         to_scene()
         p.setRenderHint(QPainter.Antialiasing)
         self._paint_lake_life(p, cabin)
+        if self.fireworks.visible:  # over the lake, in front of the far trees
+            self.fireworks.paint(p)
+            if not self.weather.frozen_lake:
+                p.save()
+                p.setClipRect(QRectF(-200, HORIZON, W + 400, H))
+                self.fireworks.paint(p, reflection_line=HORIZON)
+                p.restore()
         if cabin:
             self._paint_lanterns(p)
+            decorations.outside_dynamic(p, self.decoration, self.t, 1 - self.light.daylight)
             self._paint_smoke(p)
         self._paint_foreground_trees(p, cabin)
         self._paint_fog(p)
@@ -507,6 +521,7 @@ class OutsideScene:
 
         if cabin:
             lodge.paint_lodge(p, self.lit, light, snow)
+            decorations.outside_static(p, self.decoration, self.lit)
 
         # big pines in front of the lodge
         crown = self.lit(rgb(34, 66, 40))

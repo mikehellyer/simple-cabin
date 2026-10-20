@@ -33,6 +33,7 @@ HINT = "Space  inside / outside     W  weather & clock     F  full screen     M 
 
 class Stage(QWidget):
     thunder = Signal()
+    firework = Signal()
     mode_changed = Signal(str)
 
     def __init__(self, parent=None):
@@ -100,6 +101,11 @@ class Stage(QWidget):
         self.mode_changed.emit(mode)
         self.update()
 
+    def set_decoration(self, kind: Optional[str], fireworks: bool) -> None:
+        self.inside.decoration = kind
+        self.outside.decoration = kind
+        self.outside.fireworks_on = fireworks
+
     def set_light_graphics(self, light: bool) -> None:
         """Light graphics: the scenes are drawn smaller and scaled up, at a
         lower frame rate, for slower machines such as a Raspberry Pi."""
@@ -141,6 +147,9 @@ class Stage(QWidget):
             return
         self.outside.step(dt)
         self.inside.step(dt)
+        if self.outside.bangs:
+            self.outside.bangs = 0
+            self.firework.emit()
         if self.outside.thunder_pending:
             self.outside.thunder_pending = False
             self.thunder.emit()

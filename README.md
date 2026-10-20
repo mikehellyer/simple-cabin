@@ -23,9 +23,20 @@ the next 12 hours and the week ahead.
 | C | Ring the hour chime now |
 | P | Preview each kind of weather (cycles back to live) |
 | T | Preview dawn / day / dusk / night (cycles back to live) |
+| D | Preview the seasonal decorations (cycles back to today's) |
 | R | Refresh the weather now |
 | S | Settings: location, units, volumes, quarter chimes, view timings |
 | Right-click | All of the above as a menu |
+
+## Seasonal decorations
+
+The cabin dresses up for the time of year: **Halloween** (17–31 October:
+jack-o'-lanterns, bunting, a spider, bats), **Christmas** (1 December to
+Twelfth Night: a lit tree, stockings, a garland, roof lights), **Easter**
+(Palm Sunday to Easter Monday: egg bunting, daffodils, a bunny) and **New
+Year** (31 December and 1 January: a banner, balloons, champagne, and
+fireworks over the lake after dark on New Year's Eve). Turn them off in
+Settings → Views.
 
 ## Screen saver
 

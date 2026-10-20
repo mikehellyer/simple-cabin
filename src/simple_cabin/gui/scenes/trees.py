@@ -88,7 +88,7 @@ def draw_ponderosa(p: QPainter, x: float, base: float, height: float, trunk_w: f
             rx, ry = size * rng.uniform(0.5, 0.8), size * rng.uniform(0.28, 0.42)
             _tuft(p, tx_, ty_, rx, ry, rng.randrange(len(_TUFTS)), shaded if detail else (mid if k else dark))
             if snow and rng.random() < 0.45:
-                p.setBrush(rgb(236, 240, 246, 190))
+                p.setBrush(QColor(light.red() * 236 // 255, light.green() * 240 // 255, light.blue() * 246 // 255, 190))
                 p.drawEllipse(QPointF(tx_ + rx * 0.1, ty_ - ry * 0.55), rx * 0.55, ry * 0.28)
 
 

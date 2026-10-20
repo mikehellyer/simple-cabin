@@ -14,7 +14,7 @@ from PySide6.QtGui import QAction, QIcon, QKeySequence
 from PySide6.QtWidgets import QMainWindow, QMenu, QMessageBox, QVBoxLayout, QWidget
 
 from simple_cabin import __version__
-from simple_cabin.core import chimes, sky
+from simple_cabin.core import chimes, seasons, sky
 from simple_cabin.core import weather as wx
 from simple_cabin.core.diagnostics import log_event
 from simple_cabin.core.keep_awake import KeepAwake
@@ -59,6 +59,7 @@ class MainWindow(QMainWindow):
         self._fetching = False
         self._weather_preview: Optional[str] = None
         self._time_preview: Optional[str] = None
+        self._decoration_preview: Optional[str] = None  # a season, "off", or None for the real date
 
         central = QWidget()
         layout = QVBoxLayout(central)
@@ -71,6 +72,7 @@ class MainWindow(QMainWindow):
         self._stage.setContextMenuPolicy(Qt.CustomContextMenu)
         self._stage.customContextMenuRequested.connect(self._show_menu)
         self._stage.thunder.connect(lambda: self._audio.thunder(random.randint(900, 3200)))
+        self._stage.firework.connect(lambda: self._audio.firework(random.randint(700, 1600)))
         layout.addWidget(self._stage, 1)
         self.setCentralWidget(central)
 
@@ -115,6 +117,7 @@ class MainWindow(QMainWindow):
         self._act_chime = self._action("Ring the hour chime now", "C", self._audio.play_hour_chime_now)
         self._act_preview_weather = self._action("Preview another weather", "P", self._cycle_weather_preview)
         self._act_preview_time = self._action("Preview another time of day", "T", self._cycle_time_preview)
+        self._act_preview_decor = self._action("Preview seasonal decorations", "D", self._cycle_decoration_preview)
         self._act_refresh = self._action("Refresh the weather now", "R", self._update_weather)
         self._act_settings = self._action("Settings…", ["S", "Ctrl+,"], self._open_settings)
         self._act_about = self._action("About Simple-Cabin", None, self._about)
@@ -124,7 +127,7 @@ class MainWindow(QMainWindow):
     def _show_menu(self, pos) -> None:
         menu = QMenu(self)
         for action in (self._act_inside, self._act_outside, self._act_weather, None, self._act_full, self._act_mute,
-                       self._act_chime, None, self._act_preview_weather, self._act_preview_time, self._act_refresh,
+                       self._act_chime, None, self._act_preview_weather, self._act_preview_time, self._act_preview_decor, self._act_refresh,
                        None, self._act_settings, self._act_about, self._act_quit):
             menu.addSeparator() if action is None else menu.addAction(action)
         menu.exec(self._stage.mapToGlobal(pos))
@@ -163,6 +166,17 @@ class MainWindow(QMainWindow):
         names = [None, *wx.PREVIEWS]
         self._weather_preview = names[(names.index(self._weather_preview) + 1) % len(names)]
         self._stage.toast(f"Weather preview: {self._weather_preview}  (P for the next)" if self._weather_preview else "Live weather")
+        self._refresh_conditions()
+
+    def _cycle_decoration_preview(self) -> None:
+        names = [None, *seasons.ALL, "off"]
+        self._decoration_preview = names[(names.index(self._decoration_preview) + 1) % len(names)]
+        if self._decoration_preview is None:
+            self._stage.toast("Decorations for today's date")
+        elif self._decoration_preview == "off":
+            self._stage.toast("Decorations preview: none  (D for the next)")
+        else:
+            self._stage.toast(f"Decorations preview: {seasons.NAMES[self._decoration_preview]}  (D for the next)")
         self._refresh_conditions()
 
     def _cycle_time_preview(self) -> None:
@@ -204,6 +218,7 @@ class MainWindow(QMainWindow):
         if dialog.exec():
             self._store.update(**dialog.values())
         self._apply_settings()  # also undoes any live volume preview after Cancel
+        self._refresh_conditions()  # (decorations on or off)
         s = self._store.settings
         if (s.location_mode, s.location_name, s.latitude, s.longitude) != before:
             self._location = None
@@ -265,6 +280,15 @@ class MainWindow(QMainWindow):
                     rise, set_ = datetime.fromisoformat(today.sunrise), datetime.fromisoformat(today.sunset)
             light = sky.light_at(now, rise, set_)
         self._stage.set_conditions(weather, light, sky.moon_phase())
+        if self._decoration_preview is not None:
+            kind = None if self._decoration_preview == "off" else self._decoration_preview
+            fireworks = kind == seasons.NEW_YEAR
+        elif self._store.settings.decorations:
+            today = datetime.now()
+            kind, fireworks = seasons.decoration_for(today.date()), seasons.fireworks_now(today)
+        else:
+            kind, fireworks = None, False
+        self._stage.set_decoration(kind, fireworks)
         self._audio.set_rain(weather.rain)
 
     # --- about & updates
