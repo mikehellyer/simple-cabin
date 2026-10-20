@@ -21,6 +21,7 @@ from simple_cabin.gui.paint import H, W, alpha, hgrad, mix, poly, radial, rgb, s
 from simple_cabin.gui.scenes import clock
 from simple_cabin.gui.scenes.fire import Fire
 from simple_cabin.gui.scenes.outside import WINDOW_VIEW, OutsideScene
+from simple_cabin.gui.scenes.painting import canoe_painting
 
 FLOOR_Y = 690.0
 BEAM_Y = 112.0  # bottom of the big tie beam under the vaulted ceiling
@@ -351,40 +352,19 @@ class InsideScene:
 
     def _paint_mantel_things(self, p: QPainter, shelf: float) -> None:
         p.setPen(Qt.NoPen)
-        # a framed landscape painting, leaning against the stone
-        frame = QRectF(590, 196, 210, shelf - 196)
-        p.setBrush(rgb(0, 0, 0, 90))
-        p.drawRect(frame.translated(6, 4))
-        p.setBrush(vgrad(frame.top(), frame.bottom(), rgb(120, 84, 48), rgb(70, 46, 26)))
-        p.drawRect(frame)
-        mat = frame.adjusted(9, 9, -9, -9)
-        p.setBrush(rgb(232, 224, 204))
-        p.drawRect(mat)
-        pic = mat.adjusted(12, 12, -12, -12)
-        p.setBrush(vgrad(pic.top(), pic.bottom(), rgb(196, 214, 222), rgb(232, 220, 190)))
+        # a framed painting of a canoe trip, leaning against the stone
+        frame = QRectF(566, 166, 244, shelf - 166)
+        p.setBrush(rgb(0, 0, 0, 100))
+        p.drawRect(frame.translated(7, 5))
+        p.drawImage(frame.topLeft(), tx.wood(int(frame.width()), int(frame.height()), 400, True, "walnut", 131, seams=False))
+        tx.shade_rect(p, frame, top=0.1, bottom=0.35, left=0.15, right=0.3)
+        lip = frame.adjusted(12, 12, -12, -12)
+        p.setBrush(vgrad(lip.top(), lip.bottom(), rgb(236, 200, 120), rgb(150, 110, 46)))
+        p.drawRect(lip)
+        pic = lip.adjusted(4, 4, -4, -4)
+        p.drawImage(pic, canoe_painting())
+        p.setBrush(vgrad(pic.top(), pic.bottom(), rgb(255, 255, 255, 18), rgb(0, 0, 0, 30)))  # a little glazing sheen
         p.drawRect(pic)
-        p.save()
-        p.setClipRect(pic)
-        p.setBrush(rgb(120, 136, 150))
-        p.drawPolygon(poly((pic.left(), pic.top() + 70), (pic.left() + 50, pic.top() + 34), (pic.left() + 96, pic.top() + 60),
-                           (pic.left() + 140, pic.top() + 30), (pic.right(), pic.top() + 66), (pic.right(), pic.bottom()), (pic.left(), pic.bottom())))
-        p.setBrush(rgb(110, 128, 72))
-        p.drawPolygon(poly((pic.left(), pic.top() + 86), (pic.right(), pic.top() + 78), (pic.right(), pic.bottom()), (pic.left(), pic.bottom())))
-        p.setBrush(rgb(170, 190, 200))
-        river = QPainterPath()
-        river.moveTo(pic.left() + 60, pic.bottom())
-        river.cubicTo(pic.left() + 80, pic.top() + 110, pic.left() + 120, pic.top() + 96, pic.left() + 100, pic.top() + 84)
-        river.lineTo(pic.left() + 110, pic.top() + 84)
-        river.cubicTo(pic.left() + 140, pic.top() + 100, pic.left() + 110, pic.top() + 116, pic.left() + 96, pic.bottom())
-        p.drawPath(river)
-        rng = random.Random(51)
-        for i in range(14):  # autumn trees
-            x = pic.left() + rng.uniform(0, pic.width())
-            y = pic.top() + rng.uniform(78, 100)
-            colour = rgb(*rng.choice(((190, 110, 50), (160, 70, 40), (210, 160, 60), (70, 100, 50))))
-            p.setBrush(colour)
-            p.drawEllipse(QPointF(x, y), rng.uniform(5, 9), rng.uniform(7, 12))
-        p.restore()
 
         # an iron pot with greenery, and a stoneware bowl
         p.setBrush(radial(500, 330, 34, rgb(110, 100, 86), rgb(52, 46, 40)))
