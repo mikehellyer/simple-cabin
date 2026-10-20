@@ -91,6 +91,13 @@ resolution and 20 fps). Settings → Views → Graphics can change that. If the
 screen still blanks, turn off *Screen Blanking* in Raspberry Pi
 Configuration → Display.
 
+## If you can't hear something
+
+Run `simple-cabin --sound-test` in a terminal. It says which audio output
+it's using, then plays the fire, the ticking clock, a chime and thunder in
+turn. (All sound goes out as one mixed stream, so if the fire can be heard,
+so can everything else.)
+
 ## Weather and location
 
 Weather comes from [Open-Meteo](https://open-meteo.com/) (free, no API key).

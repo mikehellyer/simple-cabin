@@ -486,6 +486,7 @@ class MainWindow(QMainWindow):
 
     def closeEvent(self, event) -> None:
         self._stage.shutdown()
+        self._audio.shutdown()
         self._keep_awake.stop()
         if self._remote is not None:
             self._remote.stop()

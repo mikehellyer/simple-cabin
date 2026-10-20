@@ -1,5 +1,11 @@
 """Playing the cabin's sounds: the clock's tick-tock on every real second,
-the fire, the chimes, and rain and thunder when the weather brings them."""
+the fire, the chimes, and rain, thunder and fireworks when they happen.
+
+Everything is mixed (core.mixer) into one continuous stream on a single
+QAudioSink, kept topped up a few hundredths of a second at a time. A tick
+is placed on the sample that will be heard on the real second, using how
+much sound is already queued ahead of it.
+"""
 from __future__ import annotations
 
 import time
@@ -7,13 +13,17 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Optional
 
-from PySide6.QtCore import QObject, Qt, QTimer, QUrl, Signal
-from PySide6.QtMultimedia import QSoundEffect
+from PySide6.QtCore import QObject, Qt, QTimer, Signal
+from PySide6.QtMultimedia import QAudio, QAudioFormat, QAudioSink, QMediaDevices
 
 from simple_cabin.core import chimes, synth
+from simple_cabin.core.diagnostics import log_event
+from simple_cabin.core.mixer import RATE, Mixer, load_wav, seconds_in
 from simple_cabin.gui.workers import BackgroundRunner
 
-LOOPS = ("fire", "rain")
+BUFFER_SECONDS = 0.5  # sound queued ahead: enough to ride out a slow frame on a Pi
+FILL_MS = 15
+RETRY_SECONDS = 5.0
 
 
 class AudioEngine(QObject):
@@ -23,80 +33,137 @@ class AudioEngine(QObject):
         super().__init__(parent)
         self._dir = sound_dir
         self._runner = runner
-        self._effects: dict[str, QSoundEffect] = {}
         self._preparing: set[str] = set()
         self._master, self._tick, self._fire, self._chime = 0.8, 0.7, 0.22, 0.75
-        self._muted = False
         self._quarters = False
         self._rain = 0.0
-        self._play_when_ready: Optional[str] = None
-        self._next_second = 0
         self._voice = synth.DEFAULT_CLOCK_VOICE
+        self._last_second = 0
 
-        self._tick_timer = QTimer(self)
-        self._tick_timer.setTimerType(Qt.PreciseTimer)
-        self._tick_timer.setSingleShot(True)
-        self._tick_timer.timeout.connect(self._on_second)
+        self._sink: Optional[QAudioSink] = None
+        self._io = None
+        self.rate = RATE
+        self.device_name = ""
+        self.status = "not started"
+        self._next_retry = 0.0
+        self.mixer = Mixer(self._level, RATE)
+
+        self._fill_timer = QTimer(self)
+        self._fill_timer.setTimerType(Qt.PreciseTimer)
+        self._fill_timer.timeout.connect(self._fill)
 
     # --- setup
 
     def start(self) -> None:
+        self._open_output()
         voice = self._voice
 
         def make_basics():
             names = (*synth.beat_names(voice), "fire", "rain", "thunder", "firework")
             synth.remove_stale(self._dir)
-            return {name: synth.ensure_sound(name, self._dir) for name in names}
+            return {name: load_wav(synth.ensure_sound(name, self._dir), self.rate) for name in names}
 
-        self._runner.run(make_basics, self._on_basics_ready, lambda error: print(f"sound synthesis failed: {error}"))
-        self._schedule_next_second()
+        self._runner.run(make_basics, self._on_basics_ready, lambda error: log_event(f"sound loading failed: {error}"))
         self._prepare_upcoming_chime()
+        self._fill_timer.start(FILL_MS)
 
-    def _on_basics_ready(self, paths: dict) -> None:
-        for name, path in paths.items():
-            self._load(name, path)
-        self._effects["fire"].play()
+    def _open_output(self) -> None:
+        device = QMediaDevices.defaultAudioOutput()
+        self.device_name = device.description() or "(no audio output)"
+        fmt = QAudioFormat()
+        fmt.setChannelCount(2)
+        fmt.setSampleFormat(QAudioFormat.SampleFormat.Int16)
+        for rate in (RATE, 48000, device.preferredFormat().sampleRate()):
+            fmt.setSampleRate(rate)
+            if device.isFormatSupported(fmt):
+                break
+        if fmt.sampleRate() != self.rate:  # sounds already loaded are at the old rate: start again at this one
+            self.rate = fmt.sampleRate()
+            self.mixer = Mixer(self._level, self.rate)
+        self._sink = QAudioSink(device, fmt, self)
+        self._sink.setBufferSize(int(self.rate * 4 * BUFFER_SECONDS))
+        self._io = self._sink.start()
+        self.status = f"{self._state_name()} on {self.device_name} at {self.rate} Hz"
+        log_event(f"audio: {self.status} (buffer {self._sink.bufferSize()} bytes, error {self._sink.error().name})")
+
+    def _state_name(self) -> str:
+        return self._sink.state().name if self._sink is not None else "no sink"
+
+    def _on_basics_ready(self, sounds: dict) -> None:
+        for name, samples in sounds.items():
+            self.mixer.add(name, samples)
+        self.mixer.play("fire", loop=True)
         self._apply_rain()
 
-    def _load(self, name: str, path: Path) -> None:
-        self._preparing.discard(name)
-        effect = QSoundEffect(self)
-        effect.setSource(QUrl.fromLocalFile(str(path)))
-        if name in LOOPS:
-            effect.setLoopCount(QSoundEffect.Loop.Infinite.value)
-        self._effects[name] = effect
-        self._apply_volume(name)
-        if self._play_when_ready == name:
-            self._play_when_ready = None
-            self._play_chime(name)
-
     def _prepare(self, name: str) -> None:
-        if name in self._effects or name in self._preparing:
+        if self.mixer.has(name) or name in self._preparing:
             return
         self._preparing.add(name)
-        self._runner.run(lambda: synth.ensure_sound(name, self._dir), lambda path: self._load(name, path),
+
+        def done(samples) -> None:
+            self._preparing.discard(name)
+            self.mixer.add(name, samples)
+
+        self._runner.run(lambda: load_wav(synth.ensure_sound(name, self._dir), self.rate), done,
                          lambda error: self._preparing.discard(name))
+
+    # --- the stream
+
+    def _fill(self) -> None:
+        """Top up the stream, placing any ticks and chimes that fall in it."""
+        sink = self._sink
+        if sink is None or self._io is None:
+            return
+        if sink.state() == QAudio.State.StoppedState and sink.error() != QAudio.Error.NoError:
+            now = time.monotonic()
+            if now >= self._next_retry:  # the device went away: try again now and then
+                self._next_retry = now + RETRY_SECONDS
+                log_event(f"audio stopped ({sink.error().name}); reopening")
+                sink.stop()
+                self._open_output()
+            return
+        free = sink.bytesFree()
+        frames = free // 4
+        if frames < 256:
+            return
+        queued = max(0, sink.bufferSize() - free) // 4
+        start = time.time() + queued / self.rate
+        end = start + frames / self.rate
+        for second in seconds_in(start, end):
+            if second > self._last_second:
+                self._last_second = second
+                self._on_second(second)
+        self._io.write(self.mixer.render(frames, start))
+
+    def _on_second(self, second: int) -> None:
+        # The pendulum (see clock.pendulum_angle) ends its swing on the
+        # second: one side on even seconds (tick), the other on odd (tock).
+        beats = synth.beat_names(self._voice)
+        beat = beats[second % len(beats)]
+        if self.mixer.has(beat):  # (no backlog of ticks while the sounds load)
+            self.mixer.play(beat, at=second)
+        at = datetime.fromtimestamp(second)
+        if at.second == 0:
+            key = chimes.chime_for(at.hour, at.minute, self._quarters)
+            if key:
+                self._play_chime(key, at=second)
+            self._prepare_upcoming_chime()
 
     # --- volume
 
     def set_volumes(self, master: int, tick: int, fire: int, chime: int) -> None:
         self._master, self._tick, self._fire, self._chime = master / 100, tick / 100, fire / 100, chime / 100
-        for name in self._effects:
-            self._apply_volume(name)
 
     def set_muted(self, muted: bool) -> None:
-        self._muted = muted
-        for effect in self._effects.values():
-            effect.setMuted(muted)
+        self.mixer.muted = muted
 
     def set_clock_voice(self, voice: str) -> None:
         """Change how the clock ticks (makes the new sounds if need be)."""
         if voice == self._voice:
             return
         self._voice = voice
-        if self._effects:  # started already: load the new beats now
-            for name in synth.beat_names(voice):
-                self._prepare(name)
+        for name in synth.beat_names(voice):
+            self._prepare(name)
 
     def set_quarter_chimes(self, enabled: bool) -> None:
         self._quarters = enabled
@@ -119,12 +186,6 @@ class AudioEngine(QObject):
             level *= synth.FIRE_GAIN
         return max(0.0, min(1.0, level))
 
-    def _apply_volume(self, name: str) -> None:
-        effect = self._effects.get(name)
-        if effect is not None:
-            effect.setVolume(self._level(name))
-            effect.setMuted(self._muted)
-
     # --- weather sounds
 
     def set_rain(self, intensity: float) -> None:
@@ -132,51 +193,18 @@ class AudioEngine(QObject):
         self._apply_rain()
 
     def _apply_rain(self) -> None:
-        effect = self._effects.get("rain")
-        if effect is None:
-            return
-        self._apply_volume("rain")
-        if self._rain > 0 and not effect.isPlaying():
-            effect.play()
-        elif self._rain <= 0 and effect.isPlaying():
-            effect.stop()
+        if self._rain > 0:
+            self.mixer.play("rain", loop=True)
+        else:
+            self.mixer.stop("rain")
 
     def thunder(self, delay_ms: int) -> None:
-        effect = self._effects.get("thunder")
-        if effect is not None:
-            QTimer.singleShot(delay_ms, effect.play)
+        self.mixer.play("thunder", at=time.time() + delay_ms / 1000)
 
     def firework(self, delay_ms: int) -> None:
-        effect = self._effects.get("firework")
-        if effect is not None:
-            QTimer.singleShot(delay_ms, effect.play)
+        self.mixer.play("firework", at=time.time() + delay_ms / 1000)
 
-    # --- the clock
-
-    def _schedule_next_second(self) -> None:
-        now = time.time()
-        if not self._next_second or abs(self._next_second - now) > 2:
-            self._next_second = int(now) + 1  # (re)synchronise, e.g. after the machine slept
-        self._tick_timer.start(max(0, int((self._next_second - now) * 1000)))
-
-    def _on_second(self) -> None:
-        second = self._next_second
-        self._next_second += 1
-        self._schedule_next_second()
-
-        # The pendulum (see clock.pendulum_angle) ends its swing on the
-        # second: one side on even seconds (tick), the other on odd (tock).
-        beats = synth.beat_names(self._voice)
-        effect = self._effects.get(beats[second % len(beats)])
-        if effect is not None:
-            effect.play()
-
-        at = datetime.fromtimestamp(second)
-        if at.second == 0:
-            key = chimes.chime_for(at.hour, at.minute, self._quarters)
-            if key:
-                self._play_chime(key)
-            self._prepare_upcoming_chime()
+    # --- chimes
 
     def _prepare_upcoming_chime(self) -> None:
         """Make the next chime's sound in good time (the long ones take a
@@ -189,13 +217,9 @@ class AudioEngine(QObject):
                 self._prepare(key)
                 return
 
-    def _play_chime(self, key: str) -> None:
-        effect = self._effects.get(key)
-        if effect is None:
-            self._play_when_ready = key
-            self._prepare(key)
-            return
-        effect.play()
+    def _play_chime(self, key: str, at: float = 0.0) -> None:
+        self._prepare(key)  # (if it isn't ready it starts as soon as it is)
+        self.mixer.play(key, at=at)
         self.chime_started.emit(key)
 
     def play_hour_chime_now(self) -> None:
@@ -203,6 +227,9 @@ class AudioEngine(QObject):
         self._play_chime(f"hour_{chimes.strike_count(datetime.now().hour)}")
 
     def stop_chimes(self) -> None:
-        for name, effect in self._effects.items():
-            if name.startswith(("hour_", "quarter_")):
-                effect.stop()
+        self.mixer.stop_matching(lambda name: name.startswith(("hour_", "quarter_")))
+
+    def shutdown(self) -> None:
+        self._fill_timer.stop()
+        if self._sink is not None:
+            self._sink.stop()

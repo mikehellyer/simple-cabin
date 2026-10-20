@@ -54,9 +54,48 @@ def self_test() -> int:
     return 0 if all(checks.values()) else 1
 
 
+def sound_test() -> int:
+    """`Simple-Cabin --sound-test`: report the audio output and play each
+    kind of sound in turn (for when something can't be heard)."""
+    from pathlib import Path
+
+    from platformdirs import user_cache_dir
+    from PySide6.QtCore import QCoreApplication, QTimer
+
+    from simple_cabin.gui.audio import AudioEngine
+    from simple_cabin.gui.workers import BackgroundRunner
+
+    app = QCoreApplication(sys.argv)
+    runner = BackgroundRunner()
+    audio = AudioEngine(Path(user_cache_dir("Simple-Cabin")) / "sounds", runner)
+    audio.set_volumes(80, 70, 22, 75)
+
+    def say(text: str) -> None:
+        print(text, flush=True)
+
+    say(f"Simple-Cabin {__version__} sound test")
+    audio.start()
+    say(f"  output: {audio.status}")
+    say("  you should hear the fire, and the clock ticking every second…")
+    steps = [
+        (5000, lambda: (say("  …now a quarter-hour chime"), audio._play_chime("quarter_15"))),
+        (9000, lambda: (say("  …now distant thunder"), audio.thunder(0))),
+        (5000, lambda: say(f"  done: {audio.status}; sink state now {audio._state_name()}, error {audio._sink.error().name if audio._sink else '-'}")),
+        (300, lambda: (audio.shutdown(), runner.shutdown(3000), app.quit())),
+    ]
+    t = 0
+    for delay, fn in steps:
+        t += delay
+        QTimer.singleShot(t, fn)
+    app.exec()
+    return 0
+
+
 def main() -> int:
     if "--self-test" in sys.argv:
         return self_test()
+    if "--sound-test" in sys.argv:
+        return sound_test()
 
     # Qt is imported only now, so --self-test runs even where there's no
     # display or graphics libraries (the release workflow's build machines).
