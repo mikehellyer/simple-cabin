@@ -17,9 +17,10 @@ def self_test() -> int:
     try:
         from simple_cabin.core import synth
 
-        checks["recorded clock"] = all((synth.RECORDED_DIR / f"{n}.wav").is_file() for n in synth.RECORDED_BEATS)
+        names = [*synth.RECORDED_BEATS, synth.FIRE_FILE]
+        checks["recordings"] = all((synth.RECORDED_DIR / f"{n}.wav").is_file() for n in names)
     except Exception:
-        checks["recorded clock"] = False
+        checks["recordings"] = False
     try:
         from simple_cabin.core import weather
 

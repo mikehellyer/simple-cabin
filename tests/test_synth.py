@@ -30,12 +30,14 @@ def test_render_names_for_voices():
     assert np.allclose(synth.render("tick"), synth.tick(False, synth.DEFAULT_VOICE))
 
 
-def test_fire_loop_joins_up_seamlessly():
-    fire = synth.fire_loop(seconds=4.0)
-    assert len(fire) == 4 * synth.RATE
+def test_fire_is_a_packaged_seamless_stereo_loop():
+    path = synth.ensure_sound("fire", Path("/nonexistent-cache"))  # never synthesised or cached
+    with wave.open(str(path)) as w:
+        assert w.getframerate() == synth.RATE and w.getnchannels() == 2
+        assert w.getnframes() > 20 * synth.RATE  # long enough not to sound repetitive
+        y = np.frombuffer(w.readframes(w.getnframes()), "<i2").reshape(-1, 2) / 32767
     # the jump across the loop point is no bigger than an ordinary step
-    steps = np.abs(np.diff(fire))
-    assert abs(fire[0] - fire[-1]) <= steps.max()
+    assert np.abs(y[0] - y[-1]).max() <= np.percentile(np.abs(np.diff(y, axis=0)), 99)
 
 
 def test_hour_chime_length_grows_with_the_strikes():

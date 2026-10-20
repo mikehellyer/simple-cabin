@@ -114,7 +114,10 @@ class AudioEngine(QObject):
         else:
             part = self._chime
         # A gentle curve, so the sliders feel even to the ear.
-        return max(0.0, min(1.0, (self._master * part) ** 1.5))
+        level = (self._master * part) ** 1.5
+        if name == "fire":
+            level *= synth.FIRE_GAIN
+        return max(0.0, min(1.0, level))
 
     def _apply_volume(self, name: str) -> None:
         effect = self._effects.get(name)

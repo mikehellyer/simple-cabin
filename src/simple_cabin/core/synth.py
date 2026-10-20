@@ -1,9 +1,9 @@
 """Every sound in the cabin, synthesised with numpy and saved as WAV files.
 
-The fire's crackle, the weather and the Westminster chimes are all made
-here the first time they're needed, then kept in the cache folder. The
-clock's tick-tock can be synthesised too (VOICES), but by default it's a
-real recording, cut by tools/extract_recorded_tick.py into sounds/. Bump SYNTH_VERSION after
+The weather and the Westminster chimes are made here the first time
+they're needed, then kept in the cache folder. The fire and, by default,
+the clock's tick-tock are real recordings, cut by the scripts in tools/
+into sounds/ (the tick-tock can be synthesised too: see VOICES). Bump SYNTH_VERSION after
 changing how anything sounds, so old files get remade.
 """
 from __future__ import annotations
@@ -30,7 +30,7 @@ def _time(seconds: float) -> np.ndarray:
 
 def _filtered(signal: np.ndarray, gain) -> np.ndarray:
     """Filter in the frequency domain: gain(freqs_hz) -> weights. This is
-    circular, which suits the fire loop — it wraps round seamlessly."""
+    circular, which suits a loop — it wraps round seamlessly."""
     spectrum = np.fft.rfft(signal)
     freqs = np.fft.rfftfreq(len(signal), 1 / RATE)
     return np.fft.irfft(spectrum * gain(freqs), len(signal))
@@ -159,53 +159,13 @@ def tick(tock: bool = False, voice: str = DEFAULT_VOICE) -> np.ndarray:
 
 # --- the fire
 
-
-def fire_loop(seconds: float = 24.0, seed: int = 3) -> np.ndarray:
-    """A seamless loop of a log fire: a low roar that breathes, a soft
-    hiss, and a scatter of crackles and the odd bigger pop."""
-    rng = np.random.default_rng(seed)
-    n = int(seconds * RATE)
-    t = np.arange(n) / RATE
-
-    def lfo(*cycles: int) -> np.ndarray:
-        # Whole numbers of cycles across the loop, so it joins up exactly.
-        waves = [np.sin(2 * np.pi * c * t / seconds + rng.uniform(0, 6.3)) for c in cycles]
-        return sum(waves) / len(waves)
-
-    roar = _filtered(rng.standard_normal(n), lambda f: (f > 30) / (1 + (f / 110) ** 2))
-    roar = _normalise(roar, 1.0) * (0.65 + 0.35 * lfo(5, 9, 14, 23))
-    hiss = _filtered(rng.standard_normal(n), lambda f: np.exp(-(((f - 3800) / 1800) ** 2)))
-    hiss = _normalise(hiss, 1.0) * (0.5 + 0.5 * lfo(7, 19))
-    flutter = _filtered(rng.standard_normal(n), lambda f: np.exp(-(((f - 600) / 250) ** 2)))
-    flutter = _normalise(flutter, 1.0) * np.clip(lfo(11, 17, 31), 0, None)
-
-    crackles = np.zeros(n)
-    event_times = []
-    for start in rng.uniform(0, seconds, int(seconds * 5)):
-        event_times.append(start)
-        if rng.random() < 0.35:  # crackles come in little bursts
-            event_times.extend(start + rng.uniform(0.005, 0.12, rng.integers(1, 5)))
-    for when in event_times:
-        length = int(rng.uniform(0.002, 0.012) * RATE)
-        tt = np.arange(length) / RATE
-        burst = rng.standard_normal(length) * np.exp(-tt / rng.uniform(0.0003, 0.0025))
-        burst = np.diff(burst, prepend=0.0)  # brighter, snappier
-        level = min(1.0, rng.lognormal(-1.6, 0.8))
-        idx = (int(when * RATE) + np.arange(length)) % n
-        np.add.at(crackles, idx, level * burst)
-
-    pops = np.zeros(n)
-    for when in rng.uniform(0, seconds, int(seconds * 0.5)):
-        length = int(0.06 * RATE)
-        tt = np.arange(length) / RATE
-        freq = rng.uniform(250, 900)
-        pop = np.sin(2 * np.pi * freq * tt) * np.exp(-tt / rng.uniform(0.004, 0.012))
-        pop += 0.6 * rng.standard_normal(length) * np.exp(-tt / 0.002)
-        idx = (int(when * RATE) + np.arange(length)) % n
-        np.add.at(pops, idx, rng.uniform(0.5, 1.0) * pop)
-
-    mix = 0.55 * roar + 0.05 * hiss + 0.08 * flutter + 0.9 * _normalise(crackles, 1.0) + 0.5 * _normalise(pops, 1.0)
-    return _normalise(mix, 0.85)
+# A real fire: a seamless loop made from a recording by
+# tools/extract_fire_loop.py. It's stored at full scale, which is quieter
+# on average than the synthesised fire it replaced (a crackly fire has big
+# peaks), so it's played back this much louder to keep the same balance
+# under the clock.
+FIRE_FILE = "fire_recorded"
+FIRE_GAIN = 2.12
 
 
 # --- the weather
@@ -303,14 +263,12 @@ def write_wav(path: Path, samples: np.ndarray) -> None:
 
 
 def render(name: str) -> np.ndarray:
-    if name in RECORDED_BEATS:
+    if name in RECORDED_BEATS or name == "fire":
         raise KeyError(f"{name} is a recording, not synthesised")
     if name.startswith(("tick", "tock")):
         # "tick" / "tock", or with a voice: "tick_bold"
         kind, _, voice = name.partition("_")
         return tick(kind == "tock", voice or DEFAULT_VOICE)
-    if name == "fire":
-        return fire_loop()
     if name == "rain":
         return rain_loop()
     if name == "thunder":
@@ -333,6 +291,8 @@ def ensure_sound(name: str, directory: Path) -> Path:
     """The WAV file for a sound, making it first if it isn't cached yet."""
     if name in RECORDED_BEATS:
         return RECORDED_DIR / f"{name}.wav"
+    if name == "fire":
+        return RECORDED_DIR / f"{FIRE_FILE}.wav"
     folder = directory / f"v{SYNTH_VERSION}"
     path = folder / f"{name}.wav"
     if not path.exists():
