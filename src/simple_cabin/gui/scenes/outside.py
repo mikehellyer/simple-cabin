@@ -50,6 +50,7 @@ class OutsideScene:
         self._caches: dict = {}
         self._latest: dict = {}  # the newest layers for each view, shown while newer ones render
         self._rendering: set = set()
+        self._threads: list[threading.Thread] = []
         self._lock = threading.Lock()
         self._cloud_sprites: list[QImage] = []
         self._cloud_key = None
@@ -287,6 +288,12 @@ class OutsideScene:
             p.fillRect(target, rgb(225, 230, 255, 150 * self.lightning))
         p.restore()
 
+    def finish_renders(self, timeout: float = 5.0) -> None:
+        """Wait for background renders to end (before quitting: a thread
+        still painting while Python shuts down can crash the app)."""
+        for thread in list(self._threads):
+            thread.join(timeout)
+
     def prepare(self, target: QRectF, dpr: float, source: QRectF = FULL, cabin: bool = True) -> None:
         """Start rendering a view in the background if it isn't ready, so
         switching to it later doesn't stall (used while indoors)."""
@@ -311,8 +318,10 @@ class OutsideScene:
             start = key not in self._rendering
             self._rendering.add(key)
         if start:
-            threading.Thread(target=self._render_layers, daemon=True,
-                             args=(key, view, QRectF(target), QRectF(source), scale, dpr, cabin)).start()
+            thread = threading.Thread(target=self._render_layers, daemon=True,
+                                      args=(key, view, QRectF(target), QRectF(source), scale, dpr, cabin))
+            self._threads = [t for t in self._threads if t.is_alive()] + [thread]
+            thread.start()
         return stale
 
     def _render_layers(self, key, view, target: QRectF, source: QRectF, scale: float, dpr: float, cabin: bool):

@@ -16,7 +16,9 @@ from PySide6.QtWidgets import QMainWindow, QMenu, QMessageBox, QVBoxLayout, QWid
 from simple_cabin import __version__
 from simple_cabin.core import chimes, seasons, sky
 from simple_cabin.core import weather as wx
+from simple_cabin.core import cec
 from simple_cabin.core.diagnostics import log_event
+from simple_cabin.core.remote_server import RemoteServer, qr_matrix
 from simple_cabin.core.keep_awake import KeepAwake
 from simple_cabin.core.platform_info import is_raspberry_pi
 from simple_cabin.core.self_update import download_asset, find_asset_for_this_platform, launch_installer
@@ -50,6 +52,12 @@ class MainWindow(QMainWindow):
         self._store = SettingsStore()
         self._runner = BackgroundRunner(self)
         self._keep_awake = KeepAwake()
+        self._remote: Optional[RemoteServer] = None
+        self._remote_state: dict = {}
+        self._remote_timer = QTimer(self)
+        self._remote_timer.timeout.connect(self._poll_remote)
+        self._cec_timer = QTimer(self)
+        self._cec_timer.timeout.connect(self._register_tv_remote)
         self._pending_update = None
         cache = Path(user_cache_dir("Simple-Cabin"))
         textures.set_cache_dir(cache / "textures")
@@ -108,15 +116,23 @@ class MainWindow(QMainWindow):
         return action
 
     def _build_actions(self) -> None:
-        self._act_inside = self._action("Inside the cabin", "I", lambda: self._stage.set_mode(INSIDE))
-        self._act_outside = self._action("Outside by the lake", "O", lambda: self._stage.set_mode(OUTSIDE))
+        # Besides the letter keys, a TV remote (over HDMI-CEC) or a Bluetooth
+        # clicker sends arrows, OK, back, play/pause and the coloured buttons.
+        k = Qt.Key
+        self._act_inside = self._action("Inside the cabin", ["I", k.Key_Left], lambda: self._stage.set_mode(INSIDE))
+        self._act_outside = self._action("Outside by the lake", ["O", k.Key_Right], lambda: self._stage.set_mode(OUTSIDE))
         self._act_toggle = self._action("Switch inside / outside", ["Space", "Tab"], self._stage.toggle_view)
-        self._act_weather = self._action("Weather and clock screen", "W", self._stage.toggle_weather)
+        self._act_weather = self._action("Weather and clock screen", ["W", k.Key_Return, k.Key_Enter, k.Key_Select, k.Key_Info],
+                                         self._stage.toggle_weather)
+        self._action("", [k.Key_Back, k.Key_Backspace], self._stage.leave_weather)
         self._act_full = self._action("Full screen", ["F", "F11"], self._toggle_full_screen, checkable=True)
-        self._act_mute = self._action("Mute", "M", self._toggle_mute, checkable=True)
-        self._act_chime = self._action("Ring the hour chime now", "C", self._audio.play_hour_chime_now)
-        self._act_preview_weather = self._action("Preview another weather", "P", self._cycle_weather_preview)
-        self._act_preview_time = self._action("Preview another time of day", "T", self._cycle_time_preview)
+        self._act_mute = self._action("Mute", ["M", k.Key_Red, k.Key_MediaTogglePlayPause, k.Key_MediaPlay, k.Key_MediaPause],
+                                      self._toggle_mute, checkable=True)
+        self._act_chime = self._action("Ring the hour chime now", ["C", k.Key_Green], self._audio.play_hour_chime_now)
+        self._act_preview_weather = self._action("Preview another weather", ["P", k.Key_Up], lambda: self._cycle_weather_preview(1))
+        self._action("", k.Key_Down, lambda: self._cycle_weather_preview(-1))
+        self._act_preview_time = self._action("Preview another time of day", ["T", k.Key_Yellow], self._cycle_time_preview)
+        self._act_phone = self._action("Show the phone remote's QR code", ["Q", k.Key_Blue], self._show_phone_remote)
         self._act_preview_decor = self._action("Preview seasonal decorations", "D", self._cycle_decoration_preview)
         self._act_refresh = self._action("Refresh the weather now", "R", self._update_weather)
         self._act_settings = self._action("Settings…", ["S", "Ctrl+,"], self._open_settings)
@@ -128,6 +144,7 @@ class MainWindow(QMainWindow):
         menu = QMenu(self)
         for action in (self._act_inside, self._act_outside, self._act_weather, None, self._act_full, self._act_mute,
                        self._act_chime, None, self._act_preview_weather, self._act_preview_time, self._act_preview_decor, self._act_refresh,
+                       self._act_phone,
                        None, self._act_settings, self._act_about, self._act_quit):
             menu.addSeparator() if action is None else menu.addAction(action)
         menu.exec(self._stage.mapToGlobal(pos))
@@ -170,9 +187,9 @@ class MainWindow(QMainWindow):
 
     # --- previews (to see each weather without waiting for it)
 
-    def _cycle_weather_preview(self) -> None:
+    def _cycle_weather_preview(self, step: int = 1) -> None:
         names = [None, *wx.PREVIEWS]
-        self._weather_preview = names[(names.index(self._weather_preview) + 1) % len(names)]
+        self._weather_preview = names[(names.index(self._weather_preview) + step) % len(names)]
         self._stage.toast(f"Weather preview: {self._weather_preview}  (P for the next)" if self._weather_preview else "Live weather")
         self._refresh_conditions()
 
@@ -193,6 +210,103 @@ class MainWindow(QMainWindow):
         self._stage.toast(f"Time-of-day preview: {self._time_preview}  (T for the next)" if self._time_preview else "Live time of day")
         self._refresh_conditions()
 
+    # --- remote controls
+
+    def _apply_remotes(self) -> None:
+        s = self._store.settings
+        # the phone remote's web server
+        wanted = s.phone_remote
+        if self._remote is not None and (not wanted or self._remote.port != s.remote_port or self._remote.pin != s.remote_pin):
+            self._remote.stop()
+            self._remote = None
+            self._remote_timer.stop()
+        if wanted and self._remote is None:
+            self._remote = RemoteServer(lambda: self._remote_state, s.remote_port, s.remote_pin)
+            if self._remote.start():
+                log_event(f"phone remote at {self._remote.url()}")
+                self._remote_state = self._make_remote_state()
+                self._remote_timer.start(150)
+            else:
+                log_event(f"phone remote couldn't start: {self._remote.error}")
+                self._stage.toast(f"The phone remote couldn't start (port {s.remote_port} in use?)", 6)
+                self._remote = None
+        # the TV remote, over HDMI-CEC (re-registered now and then, in case the TV was off)
+        if s.tv_remote and cec.cec_devices():
+            if not self._cec_timer.isActive():
+                self._register_tv_remote()
+                self._cec_timer.start(10 * 60 * 1000)
+        else:
+            self._cec_timer.stop()
+
+    def _register_tv_remote(self) -> None:
+        self._runner.run(cec.register_with_tv, lambda message: log_event(message), lambda error: None)
+
+    def remote_url(self) -> Optional[str]:
+        return self._remote.url() if self._remote is not None else None
+
+    def _show_phone_remote(self) -> None:
+        url = self.remote_url()
+        if url is None:
+            self._stage.toast("The phone remote is off: turn it on in Settings (S)", 5)
+            return
+        self._stage.show_qr(qr_matrix(url), url)
+
+    def _make_remote_state(self) -> dict:
+        s = self._store.settings
+        f = self._forecast
+        now = datetime.now()
+        return {
+            "version": __version__,
+            "time": now.strftime("%H:%M") if s.clock_24h else now.strftime("%I:%M %p").lstrip("0"),
+            "mode": self._stage.mode,
+            "weather": {
+                "location": f.location if f else "",
+                "temperature": wx.format_temp(f.temperature, s.temperature_unit) if f else "",
+                "description": f.description if f else "",
+            },
+            "weather_options": list(wx.PREVIEWS),
+            "weather_preview": self._weather_preview,
+            "time_preview": self._time_preview,
+            "decoration_preview": self._decoration_preview,
+            "muted": s.muted,
+            "volume": s.master_volume,
+            "fullscreen": self.isFullScreen(),
+        }
+
+    def _poll_remote(self) -> None:
+        if self._remote is None:
+            return
+        for action, value in self._remote.take_commands():
+            self._remote_command(action, value)
+        self._remote_state = self._make_remote_state()  # (swapped whole, so the server thread never sees half)
+
+    def _remote_command(self, action: str, value) -> None:
+        if action == "view":
+            self._stage.set_mode({"inside": INSIDE, "outside": OUTSIDE, "weather": WEATHER}[value])
+        elif action == "weather":
+            self._weather_preview = None if value == "live" or value not in wx.PREVIEWS else value
+            self._stage.toast(f"Weather preview: {self._weather_preview}" if self._weather_preview else "Live weather")
+            self._refresh_conditions()
+        elif action == "time":
+            self._time_preview = None if value == "live" else value
+            self._stage.toast(f"Time-of-day preview: {self._time_preview}" if self._time_preview else "Live time of day")
+            self._refresh_conditions()
+        elif action == "decorations":
+            self._decoration_preview = None if value == "live" else value
+            self._refresh_conditions()
+        elif action == "mute":
+            self._toggle_mute()
+        elif action == "volume":
+            self._store.update(master_volume=int(value))
+            s = self._store.settings
+            self._audio.set_volumes(s.master_volume, s.tick_volume, s.fire_volume, s.chime_volume)
+        elif action == "chime":
+            self._audio.play_hour_chime_now()
+        elif action == "fullscreen":
+            self._toggle_full_screen()
+        elif action == "refresh":
+            self._update_weather()
+
     # --- settings
 
     def _apply_settings(self) -> None:
@@ -210,6 +324,7 @@ class MainWindow(QMainWindow):
         elif not s.keep_awake and self._keep_awake.active:
             self._keep_awake.stop()
             log_event("no longer keeping the screen awake")
+        self._apply_remotes()
         self._stage.inside_seconds = s.inside_minutes * 60
         self._stage.outside_seconds = s.outside_seconds
         self._stage.temperature_unit = s.temperature_unit
@@ -219,7 +334,7 @@ class MainWindow(QMainWindow):
     def _open_settings(self) -> None:
         s = self._store.settings
         before = (s.location_mode, s.location_name, s.latitude, s.longitude)
-        dialog = SettingsDialog(s, self._runner, self)
+        dialog = SettingsDialog(s, self._runner, self, remote_url=self.remote_url())
         dialog.volumes_changed.connect(self._audio.set_volumes)
         dialog.play_chime.connect(self._audio.play_hour_chime_now)
         dialog.voice_changed.connect(self._audio.set_clock_voice)
@@ -370,7 +485,10 @@ class MainWindow(QMainWindow):
         self._update_banner.set_busy(False)
 
     def closeEvent(self, event) -> None:
+        self._stage.shutdown()
         self._keep_awake.stop()
+        if self._remote is not None:
+            self._remote.stop()
         self._store.save()
         self._runner.shutdown(BACKGROUND_JOIN_TIMEOUT_MS)
         super().closeEvent(event)

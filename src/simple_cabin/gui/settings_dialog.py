@@ -1,7 +1,8 @@
 """Settings: where the weather is for, units, sound levels and views."""
 from __future__ import annotations
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import QRegularExpression, Qt, Signal
+from PySide6.QtGui import QColor, QPainter, QPixmap, QRegularExpressionValidator
 from PySide6.QtWidgets import (
     QButtonGroup,
     QCheckBox,
@@ -21,6 +22,7 @@ from PySide6.QtWidgets import (
 )
 
 from simple_cabin.core import synth
+from simple_cabin.core.remote_server import qr_matrix
 from simple_cabin.core import weather as wx
 from simple_cabin.core.settings import Settings
 from simple_cabin.gui.workers import BackgroundRunner
@@ -31,16 +33,22 @@ class SettingsDialog(QDialog):
     play_chime = Signal()
     voice_changed = Signal(str)  # live preview while choosing
 
-    def __init__(self, settings: Settings, runner: BackgroundRunner, parent=None):
+    def __init__(self, settings: Settings, runner: BackgroundRunner, parent=None, remote_url: str | None = None):
         super().__init__(parent)
         self.setWindowTitle("Settings")
-        self.setMinimumWidth(480)
+        self.setMinimumWidth(960)
         self._runner = runner
         self._place = (
             wx.Location(settings.location_name, settings.latitude, settings.longitude)
             if settings.location_mode == "manual" else None
         )
-        layout = QVBoxLayout(self)
+        outer = QVBoxLayout(self)
+        columns = QHBoxLayout()
+        outer.addLayout(columns)
+        layout = QVBoxLayout()  # the left-hand column
+        right = QVBoxLayout()
+        columns.addLayout(layout)
+        columns.addLayout(right)
 
         # Location
         where = QGroupBox("Weather location")
@@ -133,7 +141,7 @@ class SettingsDialog(QDialog):
         self._decorations.setChecked(settings.decorations)
         self._start_fullscreen = QCheckBox("Start in full screen")
         self._start_fullscreen.setChecked(settings.start_fullscreen)
-        self._keep_awake = QCheckBox("Keep the screen awake (no screensaver or lock) while open")
+        self._keep_awake = QCheckBox("Keep the screen awake (no screensaver or lock)")
         self._keep_awake.setChecked(settings.keep_awake)
         self._graphics = QComboBox()
         for label, key in (("Automatic", "auto"), ("Full", "full"), ("Light (for a Raspberry Pi)", "light")):
@@ -145,12 +153,47 @@ class SettingsDialog(QDialog):
         vl.addRow("", self._start_fullscreen)
         vl.addRow("", self._keep_awake)
         vl.addRow("Graphics", self._graphics)
-        layout.addWidget(views)
+        right.addWidget(views)
+
+        # Remote controls
+        remotes = QGroupBox("Remote controls")
+        rl = QFormLayout(remotes)
+        self._tv_remote = QCheckBox("TV remote, over HDMI (HDMI-CEC)")
+        self._tv_remote.setChecked(settings.tv_remote)
+        rl.addRow("", self._tv_remote)
+        self._phone_remote = QCheckBox("Phone remote, on this Wi-Fi network")
+        self._phone_remote.setChecked(settings.phone_remote)
+        rl.addRow("", self._phone_remote)
+        self._remote_port = QSpinBox()
+        self._remote_port.setRange(1024, 65535)
+        self._remote_port.setValue(settings.remote_port)
+        rl.addRow("Port", self._remote_port)
+        self._remote_pin = QLineEdit(settings.remote_pin)
+        self._remote_pin.setPlaceholderText("optional, digits only")
+        self._remote_pin.setMaxLength(8)
+        self._remote_pin.setValidator(QRegularExpressionValidator(QRegularExpression(r"\d{0,8}")))
+        rl.addRow("PIN", self._remote_pin)
+        where = QLabel()
+        where.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        if remote_url:
+            where.setText(f"On your phone, open <b>{remote_url}</b><br>or scan the code (also shown on screen with Q, or the TV remote's blue button).")
+            where.setWordWrap(True)
+            rl.addRow("", where)
+            code = QLabel()
+            code.setPixmap(qr_pixmap(remote_url, 150))
+            rl.addRow("", code)
+        else:
+            where.setText("Turn it on and press OK; its address and QR code then show here.")
+            where.setStyleSheet("color: gray;")
+            rl.addRow("", where)
+        right.addWidget(remotes)
+        right.addStretch(1)
+        layout.addStretch(1)
 
         buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
-        layout.addWidget(buttons)
+        outer.addWidget(buttons)
 
     def _emit_volumes(self) -> None:
         s = self._sliders
@@ -201,6 +244,10 @@ class SettingsDialog(QDialog):
             "auto_switch_views": self._auto_switch.isChecked(),
             "keep_awake": self._keep_awake.isChecked(),
             "start_fullscreen": self._start_fullscreen.isChecked(),
+            "tv_remote": self._tv_remote.isChecked(),
+            "phone_remote": self._phone_remote.isChecked(),
+            "remote_port": self._remote_port.value(),
+            "remote_pin": self._remote_pin.text(),
             "decorations": self._decorations.isChecked(),
             "graphics": self._graphics.currentData(),
             "inside_minutes": self._inside_minutes.value(),
@@ -210,3 +257,19 @@ class SettingsDialog(QDialog):
             values.update(location_name=self._place.name, latitude=self._place.latitude, longitude=self._place.longitude)
         values.update({name: slider.value() for name, slider in self._sliders.items()})
         return values
+
+
+def qr_pixmap(text: str, size: int) -> QPixmap:
+    matrix = qr_matrix(text)
+    cell = size / len(matrix)
+    pix = QPixmap(size, size)
+    pix.fill(QColor("white"))
+    p = QPainter(pix)
+    p.setPen(Qt.NoPen)
+    p.setBrush(QColor("black"))
+    for y, row in enumerate(matrix):
+        for x, dark in enumerate(row):
+            if dark:
+                p.drawRect(int(x * cell), int(y * cell), int(cell + 1), int(cell + 1))
+    p.end()
+    return pix

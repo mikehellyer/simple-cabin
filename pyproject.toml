@@ -14,6 +14,7 @@ dependencies = [
     "certifi",
     "numpy",
     "jeepney; sys_platform == 'linux'",  # D-Bus, to keep the screen awake
+    "qrcode",  # the phone remote's QR code
 ]
 
 [project.scripts]
@@ -25,6 +26,7 @@ where = ["src"]
 [tool.setuptools.package-data]
 "simple_cabin.gui" = ["resources/*.png"]
 "simple_cabin" = ["sounds/*.wav"]
+"simple_cabin.core" = ["remote.html"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

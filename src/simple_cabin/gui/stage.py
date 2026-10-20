@@ -71,6 +71,8 @@ class Stage(QWidget):
         self._loading_fire = Fire(0, 0, 150)
         self._light = False
         self._buffer: Optional[QImage] = None
+        self._qr: Optional[tuple[list, str]] = None  # the phone remote's QR code and address, while shown
+        self._qr_left = 0.0
 
         self._last = time.monotonic()
         self._timer = QTimer(self)
@@ -100,6 +102,21 @@ class Stage(QWidget):
         self._mode_time = 0.0
         self.mode_changed.emit(mode)
         self.update()
+
+    def show_qr(self, matrix: list, url: str, seconds: float = 45.0) -> None:
+        """Show the phone remote's QR code (shown again, it hides)."""
+        if self._qr_left > 0:
+            self._qr_left = 0.0
+        else:
+            self._qr, self._qr_left = (matrix, url), seconds
+        self.update()
+
+    def shutdown(self) -> None:
+        """Stop animating and let any background rendering finish."""
+        self._timer.stop()
+        if self._loader is not None:
+            self._loader.join(5.0)
+        self.outside.finish_renders()
 
     def set_decoration(self, kind: Optional[str], fireworks: bool) -> None:
         self.inside.decoration = kind
@@ -166,6 +183,7 @@ class Stage(QWidget):
             if self._fade_left <= 0:
                 self._fade_from = None
         self._toast_left = max(0.0, self._toast_left - dt)
+        self._qr_left = max(0.0, self._qr_left - dt)
         self._hint_left = max(0.0, self._hint_left - dt)
         self._idle += dt
         if self._idle > CURSOR_HIDE_SECONDS and self.window().isFullScreen():
@@ -289,7 +307,42 @@ class Stage(QWidget):
         p.drawText(QRectF(box.left() + h * 1.1, box.top(), w - h * 1.25, h), Qt.AlignVCenter | Qt.AlignLeft,
                    wx.format_temp(f.temperature, self.temperature_unit))
 
+    def _paint_qr(self, p: QPainter, rect: QRectF) -> None:
+        matrix, url = self._qr
+        size = min(rect.width(), rect.height()) * 0.42
+        modules = len(matrix)
+        cell = size / modules
+        a = min(1.0, self._qr_left)
+        card = QRectF(rect.center().x() - size / 2 - 24, rect.center().y() - size / 2 - 56, size + 48, size + 130)
+        p.save()
+        p.setOpacity(a)
+        p.setRenderHint(QPainter.Antialiasing)
+        p.setPen(Qt.NoPen)
+        p.setBrush(rgb(20, 14, 10, 225))
+        p.drawRoundedRect(card, 20, 20)
+        font = QFont()
+        font.setPixelSize(max(14, int(size * 0.07)))
+        p.setFont(font)
+        p.setPen(rgb(255, 222, 180))
+        p.drawText(QRectF(card.left(), card.top() + 12, card.width(), 36), Qt.AlignCenter, "Scan to use your phone as a remote")
+        code = QRectF(card.left() + 24, card.top() + 56, size, size)
+        p.setPen(Qt.NoPen)
+        p.setBrush(rgb(255, 255, 255))
+        p.drawRoundedRect(code.adjusted(-8, -8, 8, 8), 8, 8)
+        p.setBrush(rgb(0, 0, 0))
+        for y, row in enumerate(matrix):
+            for x, dark in enumerate(row):
+                if dark:
+                    p.drawRect(QRectF(code.left() + x * cell, code.top() + y * cell, cell + 0.5, cell + 0.5))
+        font.setPixelSize(max(12, int(size * 0.055)))
+        p.setFont(font)
+        p.setPen(rgb(230, 210, 186))
+        p.drawText(QRectF(card.left(), code.bottom() + 14, card.width(), 30), Qt.AlignCenter, url)
+        p.restore()
+
     def _paint_messages(self, p: QPainter, rect: QRectF) -> None:
+        if self._qr is not None and self._qr_left > 0:
+            self._paint_qr(p, rect)
         font = QFont()
         size = max(12, int(rect.width() / 90))
         font.setPixelSize(size)

@@ -1,0 +1,219 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#1b130e">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Cabin">
+<meta name="mobile-web-app-capable" content="yes">
+<title>Cabin Remote</title>
+<style>
+  :root {
+    --bg: #1b130e; --card: #2a1e16; --card2: #33251b; --line: #4a3626;
+    --text: #f6e9d8; --dim: #c9b49c; --accent: #f0a04b; --accent-text: #2a1606; --good: #9ccf7a;
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  body {
+    margin: 0; min-height: 100vh; background: radial-gradient(120% 60% at 50% 0%, #3a2416 0%, var(--bg) 60%);
+    color: var(--text); font: 16px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Ubuntu, sans-serif;
+    padding: max(16px, env(safe-area-inset-top)) 16px max(24px, env(safe-area-inset-bottom));
+  }
+  main { max-width: 520px; margin: 0 auto; }
+  header { display: flex; align-items: baseline; justify-content: space-between; margin: 4px 2px 14px; }
+  header h1 { font: italic 600 22px Georgia, "Times New Roman", serif; margin: 0; color: #ffd9a8; }
+  header .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--good); display: inline-block; margin-right: 6px; }
+  header .status { color: var(--dim); font-size: 13px; }
+  .now {
+    background: linear-gradient(160deg, #3b2818, #241910); border: 1px solid var(--line); border-radius: 18px;
+    padding: 16px 18px; display: grid; grid-template-columns: 1fr auto; gap: 2px 12px; margin-bottom: 14px;
+  }
+  .now .clock { font-size: 44px; font-weight: 300; letter-spacing: 1px; }
+  .now .temp { font-size: 40px; font-weight: 300; text-align: right; color: #ffd9a8; }
+  .now .place, .now .desc { color: var(--dim); font-size: 14px; }
+  .now .desc { text-align: right; }
+  section { background: var(--card); border: 1px solid var(--line); border-radius: 16px; padding: 12px; margin-bottom: 12px; }
+  section h2 { margin: 2px 4px 10px; font-size: 13px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; color: var(--dim); }
+  .row { display: grid; gap: 8px; }
+  .row.three { grid-template-columns: repeat(3, 1fr); }
+  .row.chips { grid-template-columns: repeat(auto-fill, minmax(96px, 1fr)); }
+  button {
+    font: inherit; color: var(--text); background: var(--card2); border: 1px solid var(--line); border-radius: 12px;
+    padding: 12px 8px; min-height: 48px; cursor: pointer; transition: transform .06s, background .15s;
+  }
+  button:active { transform: scale(.97); }
+  button.on { background: var(--accent); color: var(--accent-text); border-color: var(--accent); font-weight: 600; }
+  button.big { font-size: 17px; padding: 16px 8px; }
+  .row.chips button { font-size: 15px; padding: 10px 4px; overflow-wrap: anywhere; }
+  .sound { display: grid; grid-template-columns: auto 1fr auto; gap: 12px; align-items: center; }
+  input[type=range] { width: 100%; accent-color: var(--accent); height: 32px; }
+  .pin { display: none; text-align: center; padding: 24px 12px; }
+  .pin input { font: inherit; font-size: 24px; letter-spacing: .3em; text-align: center; width: 9em; padding: 10px;
+    border-radius: 12px; border: 1px solid var(--line); background: var(--card2); color: var(--text); margin: 12px 0; }
+  footer { color: var(--dim); text-align: center; font-size: 12px; margin-top: 10px; }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>Simple-Cabin</h1>
+    <span class="status"><span class="dot" id="dot"></span><span id="status">connecting…</span></span>
+  </header>
+
+  <section class="pin" id="pinbox">
+    <h2>Enter the PIN</h2>
+    <div>It's in Simple-Cabin's Settings.</div>
+    <input id="pin" inputmode="numeric" autocomplete="off" maxlength="8"><br>
+    <button class="on" onclick="savePin()">Connect</button>
+  </section>
+
+  <div id="ui">
+    <div class="now">
+      <div class="clock" id="clock">--:--</div>
+      <div class="temp" id="temp">–</div>
+      <div class="place" id="place"></div>
+      <div class="desc" id="desc"></div>
+    </div>
+
+    <section>
+      <h2>Show</h2>
+      <div class="row three">
+        <button class="big" data-group="view" data-value="inside" onclick="send('view','inside')">Inside</button>
+        <button class="big" data-group="view" data-value="outside" onclick="send('view','outside')">Outside</button>
+        <button class="big" data-group="view" data-value="weather" onclick="send('view','weather')">Weather</button>
+      </div>
+    </section>
+
+    <section>
+      <h2>Weather</h2>
+      <div class="row chips" id="weathers"></div>
+    </section>
+
+    <section>
+      <h2>Time of day</h2>
+      <div class="row chips">
+        <button data-group="time" data-value="live" onclick="send('time','live')">Real time</button>
+        <button data-group="time" data-value="Dawn" onclick="send('time','Dawn')">Dawn</button>
+        <button data-group="time" data-value="Day" onclick="send('time','Day')">Day</button>
+        <button data-group="time" data-value="Dusk" onclick="send('time','Dusk')">Dusk</button>
+        <button data-group="time" data-value="Night" onclick="send('time','Night')">Night</button>
+      </div>
+    </section>
+
+    <section>
+      <h2>Decorations</h2>
+      <div class="row chips">
+        <button data-group="decorations" data-value="live" onclick="send('decorations','live')">Today's</button>
+        <button data-group="decorations" data-value="halloween" onclick="send('decorations','halloween')">Halloween</button>
+        <button data-group="decorations" data-value="christmas" onclick="send('decorations','christmas')">Christmas</button>
+        <button data-group="decorations" data-value="easter" onclick="send('decorations','easter')">Easter</button>
+        <button data-group="decorations" data-value="new_year" onclick="send('decorations','new_year')">New Year</button>
+        <button data-group="decorations" data-value="off" onclick="send('decorations','off')">None</button>
+      </div>
+    </section>
+
+    <section>
+      <h2>Sound</h2>
+      <div class="sound">
+        <button id="mute" onclick="send('mute','toggle')">Mute</button>
+        <input type="range" id="volume" min="0" max="100" step="5" oninput="volumeChanged(this.value)">
+        <button onclick="send('chime','now')">🔔 Chime</button>
+      </div>
+    </section>
+
+    <section>
+      <h2>Screen</h2>
+      <div class="row three">
+        <button id="fullscreen" onclick="send('fullscreen','toggle')">Full screen</button>
+        <button onclick="send('refresh','weather')">Refresh weather</button>
+        <button onclick="location.reload()">Reload page</button>
+      </div>
+    </section>
+    <footer id="footer"></footer>
+  </div>
+</main>
+
+<script>
+  let pin = localStorage.getItem("cabin-pin") || "";
+  let volumeTimer = null, lastVolumeSent = 0, weathersBuilt = false;
+
+  function headers() { return { "Content-Type": "application/json", "X-Cabin-Pin": pin }; }
+
+  function setStatus(ok, text) {
+    document.getElementById("dot").style.background = ok ? "var(--good)" : "#d0634a";
+    document.getElementById("status").textContent = text;
+  }
+
+  function askPin() {
+    document.getElementById("pinbox").style.display = "block";
+    document.getElementById("ui").style.display = "none";
+  }
+
+  function savePin() {
+    pin = document.getElementById("pin").value.trim();
+    localStorage.setItem("cabin-pin", pin);
+    document.getElementById("pinbox").style.display = "none";
+    document.getElementById("ui").style.display = "block";
+    refresh();
+  }
+
+  async function send(action, value) {
+    try {
+      const r = await fetch("/api/command", { method: "POST", headers: headers(), body: JSON.stringify({ action, value }) });
+      if (r.status === 401) return askPin();
+      setTimeout(refresh, 250);
+    } catch (e) { setStatus(false, "not connected"); }
+  }
+
+  function volumeChanged(v) {
+    clearTimeout(volumeTimer);
+    volumeTimer = setTimeout(() => { lastVolumeSent = Date.now(); send("volume", Number(v)); }, 150);
+  }
+
+  function mark(group, value) {
+    document.querySelectorAll(`[data-group="${group}"]`).forEach(b => b.classList.toggle("on", b.dataset.value === value));
+  }
+
+  function buildWeathers(options) {
+    const box = document.getElementById("weathers");
+    box.innerHTML = "";
+    ["live", ...options].forEach(name => {
+      const b = document.createElement("button");
+      b.dataset.group = "weather";
+      b.dataset.value = name;
+      b.textContent = name === "live" ? "Real weather" : name;
+      b.onclick = () => send("weather", name);
+      box.appendChild(b);
+    });
+    weathersBuilt = true;
+  }
+
+  async function refresh() {
+    try {
+      const r = await fetch("/api/state", { headers: headers(), cache: "no-store" });
+      if (r.status === 401) return askPin();
+      const s = await r.json();
+      setStatus(true, "connected");
+      document.getElementById("clock").textContent = s.time;
+      document.getElementById("temp").textContent = s.weather.temperature || "–";
+      document.getElementById("place").textContent = s.weather.location || "";
+      document.getElementById("desc").textContent = s.weather.description || "";
+      if (!weathersBuilt) buildWeathers(s.weather_options);
+      mark("view", s.mode);
+      mark("weather", s.weather_preview || "live");
+      mark("time", s.time_preview || "live");
+      mark("decorations", s.decoration_preview || "live");
+      const mute = document.getElementById("mute");
+      mute.classList.toggle("on", s.muted);
+      mute.textContent = s.muted ? "Unmute" : "Mute";
+      document.getElementById("fullscreen").classList.toggle("on", s.fullscreen);
+      if (Date.now() - lastVolumeSent > 1500) document.getElementById("volume").value = s.volume;
+      document.getElementById("footer").textContent = `Simple-Cabin ${s.version}`;
+    } catch (e) { setStatus(false, "not connected"); }
+  }
+
+  refresh();
+  setInterval(refresh, 4000);
+</script>
+</body>
+</html>

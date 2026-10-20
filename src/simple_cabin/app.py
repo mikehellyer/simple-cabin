@@ -35,6 +35,12 @@ def self_test() -> int:
         except Exception:
             checks["keep awake"] = False
     try:
+        from simple_cabin.core import remote_server
+
+        checks["phone remote"] = b"Cabin Remote" in remote_server._page() and bool(remote_server.qr_matrix("http://x/"))
+    except Exception:
+        checks["phone remote"] = False
+    try:
         import certifi  # noqa: F401
 
         checks["certificates"] = True

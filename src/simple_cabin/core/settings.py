@@ -36,6 +36,13 @@ class Settings:
     keep_awake: bool = True
     # Open straight into full screen (e.g. for a Raspberry Pi cabin display).
     start_fullscreen: bool = False
+
+    # Remote controls: a web page for phones on the home network, and the
+    # TV's own remote over HDMI-CEC.
+    phone_remote: bool = False
+    remote_port: int = 8765
+    remote_pin: str = ""
+    tv_remote: bool = True
     # Halloween, Christmas, Easter and New Year decorations, in season.
     decorations: bool = True
     # "auto" picks "light" on a Raspberry Pi: drawn at lower resolution and
@@ -59,6 +66,7 @@ _RANGES = {
     "chime_volume": (0, 100),
     "inside_minutes": (1, 60),
     "outside_seconds": (10, 600),
+    "remote_port": (1024, 65535),
 }
 
 
@@ -97,6 +105,8 @@ class SettingsStore:
                 low, high = _RANGES[f.name]
                 value = max(low, min(high, value))
             setattr(self.settings, f.name, value)
+        if not (self.settings.remote_pin.isdigit() and len(self.settings.remote_pin) <= 8):
+            self.settings.remote_pin = ""
         if self.settings.location_mode == "manual" and not self.settings.location_name:
             self.settings.location_mode = "auto"
 

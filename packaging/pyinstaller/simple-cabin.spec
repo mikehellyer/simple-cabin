@@ -42,8 +42,9 @@ a = Analysis(
     datas=[
         (str(src / "simple_cabin" / "gui" / "resources" / "icon.png"), "simple_cabin/gui/resources"),
         (str(src / "simple_cabin" / "sounds" / "*.wav"), "simple_cabin/sounds"),
+        (str(src / "simple_cabin" / "core" / "remote.html"), "simple_cabin/core"),
     ],
-    hiddenimports=["numpy"] + (["jeepney", "jeepney.io.blocking"] if sys.platform.startswith("linux") else []),
+    hiddenimports=["numpy", "qrcode"] + (["jeepney", "jeepney.io.blocking"] if sys.platform.startswith("linux") else []),
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],

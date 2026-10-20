@@ -24,12 +24,40 @@ the next 12 hours and the week ahead.
 | P | Preview each kind of weather (cycles back to live) |
 | T | Preview dawn / day / dusk / night (cycles back to live) |
 | D | Preview the seasonal decorations (cycles back to today's) |
+| Q | Show the phone remote's QR code |
 | R | Refresh the weather now |
 | S | Settings: location, units, volumes, quarter chimes, view timings |
 | Right-click | All of the above as a menu |
 
 To open straight into full screen, tick **Start in full screen** in
 Settings → Views, or run `simple-cabin --fullscreen`.
+
+## Remote controls
+
+**TV remote (HDMI-CEC).** On Linux (e.g. a Raspberry Pi behind the TV) the
+app registers with the TV over HDMI, so the TV's own remote works:
+
+| Button | Does |
+| --- | --- |
+| ◀ ▶ | Inside / outside |
+| OK | Weather and clock screen |
+| Back | Back to the cabin |
+| ▲ ▼ | Next / previous weather preview |
+| Red | Mute |
+| Green | Ring the chime |
+| Yellow | Next time-of-day preview |
+| Blue | Show the phone remote's QR code |
+
+Needs `cec-ctl` (package `v4l-utils`, installed with the .deb) and a TV with
+HDMI-CEC switched on (Samsung "Anynet+", LG "SimpLink", Sony "Bravia Sync",
+Panasonic "VIERA Link"…). Bluetooth clickers and air-mouse remotes that send
+arrow keys work the same way.
+
+**Phone remote.** Turn on *Phone remote* in Settings → Remote controls and
+scan the QR code (shown there, or on screen with **Q** / the blue button).
+The page works in any phone browser on the same Wi-Fi: views, weather and
+time-of-day previews, decorations, volume, mute, chime and full screen. It
+can be protected with a PIN.
 
 ## Seasonal decorations
 

@@ -3,3 +3,4 @@ platformdirs
 certifi
 numpy
 jeepney; sys_platform == 'linux'
+qrcode
