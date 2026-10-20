@@ -172,6 +172,7 @@ class MainWindow(QMainWindow):
         self._audio.set_volumes(s.master_volume, s.tick_volume, s.fire_volume, s.chime_volume)
         self._audio.set_muted(s.muted)
         self._audio.set_quarter_chimes(s.quarter_chimes)
+        self._audio.set_clock_voice(s.clock_voice)
         self._act_mute.setChecked(s.muted)
         self._stage.auto_switch = s.auto_switch_views
         self._stage.inside_seconds = s.inside_minutes * 60
@@ -186,6 +187,7 @@ class MainWindow(QMainWindow):
         dialog = SettingsDialog(s, self._runner, self)
         dialog.volumes_changed.connect(self._audio.set_volumes)
         dialog.play_chime.connect(self._audio.play_hour_chime_now)
+        dialog.voice_changed.connect(self._audio.set_clock_voice)
         if dialog.exec():
             self._store.update(**dialog.values())
         self._apply_settings()  # also undoes any live volume preview after Cancel

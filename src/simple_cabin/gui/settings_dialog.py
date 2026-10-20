@@ -20,6 +20,7 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
 )
 
+from simple_cabin.core import synth
 from simple_cabin.core import weather as wx
 from simple_cabin.core.settings import Settings
 from simple_cabin.gui.workers import BackgroundRunner
@@ -28,6 +29,7 @@ from simple_cabin.gui.workers import BackgroundRunner
 class SettingsDialog(QDialog):
     volumes_changed = Signal(int, int, int, int)  # live preview while sliding
     play_chime = Signal()
+    voice_changed = Signal(str)  # live preview while choosing
 
     def __init__(self, settings: Settings, runner: BackgroundRunner, parent=None):
         super().__init__(parent)
@@ -99,6 +101,12 @@ class SettingsDialog(QDialog):
             slider.valueChanged.connect(self._emit_volumes)
             self._sliders[name] = slider
             sl.addRow(label, slider)
+        self._voice = QComboBox()
+        for key, recipe in synth.VOICES.items():
+            self._voice.addItem(recipe["label"], key)
+        self._voice.setCurrentIndex(max(0, self._voice.findData(settings.clock_voice)))
+        self._voice.currentIndexChanged.connect(lambda: self.voice_changed.emit(self._voice.currentData()))
+        sl.addRow("Clock voice", self._voice)
         self._quarters = QCheckBox("Chime the quarter hours too (Westminster)")
         self._quarters.setChecked(settings.quarter_chimes)
         sl.addRow("", self._quarters)
@@ -175,6 +183,7 @@ class SettingsDialog(QDialog):
             "wind_unit": self._wind.currentData(),
             "clock_24h": self._clock24.isChecked(),
             "quarter_chimes": self._quarters.isChecked(),
+            "clock_voice": self._voice.currentData(),
             "auto_switch_views": self._auto_switch.isChecked(),
             "inside_minutes": self._inside_minutes.value(),
             "outside_seconds": self._outside_seconds.value(),

@@ -15,7 +15,7 @@ import numpy as np
 from simple_cabin.core import chimes
 
 RATE = 44100
-SYNTH_VERSION = 1
+SYNTH_VERSION = 2
 
 NOTES = {"B3": 246.94, "E4": 329.63, "F#4": 369.99, "G#4": 415.30, "E3": 164.81}
 
@@ -43,32 +43,101 @@ def _normalise(signal: np.ndarray, peak: float = 0.9) -> np.ndarray:
 # --- the clock
 
 
-def tick(tock: bool = False) -> np.ndarray:
-    """One beat of the escapement. The tock is a touch lower, so the pair
-    has the familiar lopsided "tick… tock…" of a long-case clock."""
-    rng = np.random.default_rng(11 if tock else 7)
-    pitch = 0.86 if tock else 1.0
-    t = _time(0.3)
-    out = np.zeros_like(t)
+# The clock's voice. Each is a recipe for one beat of the escapement:
+#   metal: the pallet striking the escape wheel — (Hz, decay s, level)
+#   wood:  the tall hollow case resonating — (Hz, decay s, level)
+#   drop:  delay (s) and level of the second, smaller click as the wheel lands
+#   room:  how much of the room's reverb you hear, and how long it lasts (s)
+#   tock:  pitch of the tock relative to the tick (the lopsided tick… tock…)
+VOICES = {
+    "classic": {
+        "label": "Classic — woody and warm",
+        "metal": ((2350, 0.020, 0.55), (3550, 0.014, 0.40), (5200, 0.008, 0.25), (7300, 0.005, 0.12)),
+        "wood": ((185, 0.085, 1.00), (300, 0.065, 0.80), (510, 0.045, 0.55), (790, 0.030, 0.35), (1150, 0.020, 0.25)),
+        "drop": (0.016, 0.45),
+        "room": (0.22, 0.32),
+        "click": 0.9,
+        "tock": 0.84,
+        "drive": 2.2,
+    },
+    "bold": {
+        "label": "Bold — loud and crisp",
+        "metal": ((1950, 0.032, 0.80), (2950, 0.024, 0.65), (4350, 0.016, 0.45), (6150, 0.010, 0.30), (8200, 0.006, 0.15)),
+        "wood": ((210, 0.070, 0.85), (340, 0.055, 0.70), (560, 0.040, 0.50), (880, 0.028, 0.30)),
+        "drop": (0.014, 0.55),
+        "room": (0.18, 0.28),
+        "click": 1.3,
+        "tock": 0.80,
+        "drive": 3.0,
+    },
+    "deep": {
+        "label": "Deep — big case, slow ring",
+        "metal": ((1800, 0.018, 0.35), (2700, 0.012, 0.25), (4100, 0.007, 0.15)),
+        "wood": ((120, 0.140, 1.00), (198, 0.110, 0.85), (330, 0.075, 0.60), (545, 0.050, 0.40), (850, 0.030, 0.25)),
+        "drop": (0.020, 0.40),
+        "room": (0.32, 0.45),
+        "click": 0.6,
+        "tock": 0.82,
+        "drive": 2.0,
+    },
+}
+DEFAULT_VOICE = "classic"
+
+
+def _room_impulse(seconds: float, seed: int) -> np.ndarray:
+    """A small wood-panelled room: a few early echoes, then a soft tail."""
+    rng = np.random.default_rng(seed)
+    t = _time(seconds)
+    tail = rng.standard_normal(len(t)) * np.exp(-t / (seconds / 6.9))  # -60 dB by the end
+    tail = _filtered(tail, lambda f: 1 / (1 + (f / 3500) ** 2))
+    ir = 0.35 * _normalise(tail, 1.0)
+    for delay, level in ((0.011, 0.6), (0.019, 0.45), (0.027, 0.35), (0.041, 0.25)):
+        ir[int(delay * RATE)] += level
+    ir[0] = 1.0
+    return ir
+
+
+def _convolve(signal: np.ndarray, ir: np.ndarray) -> np.ndarray:
+    n = len(signal) + len(ir) - 1
+    size = 1 << (n - 1).bit_length()
+    return np.fft.irfft(np.fft.rfft(signal, size) * np.fft.rfft(ir, size), size)[:n]
+
+
+def tick(tock: bool = False, voice: str = DEFAULT_VOICE) -> np.ndarray:
+    """One beat of the escapement: a metallic click, the case's woody knock
+    and the escape wheel landing, heard in a small room."""
+    v = VOICES.get(voice, VOICES[DEFAULT_VOICE])
+    rng = np.random.default_rng((11 if tock else 7) + len(voice))
+    pitch = v["tock"] if tock else 1.0
+    t = _time(0.45)
+    dry = np.zeros_like(t)
 
     def strike(start: float, level: float) -> None:
         offset = int(start * RATE)
         tt = t[: len(t) - offset]
-        click = rng.standard_normal(len(tt)) * np.exp(-tt / 0.0012)
-        click = _filtered(click, lambda f: (f > 900) * 1.0)
-        ring = sum(
-            amp * np.sin(2 * np.pi * freq * pitch * tt) * np.exp(-tt / decay)
-            for freq, decay, amp in ((1280, 0.011, 0.5), (2470, 0.007, 0.32), (3900, 0.004, 0.18))
-        )
-        body = 0.55 * np.sin(2 * np.pi * 205 * pitch * tt) * np.exp(-tt / 0.05)
-        body += 0.3 * np.sin(2 * np.pi * 96 * pitch * tt) * np.exp(-tt / 0.08)
-        out[offset:] += level * (0.6 * click + ring + body)
+        # the impact itself: a very short, bright burst
+        click = rng.standard_normal(len(tt)) * np.exp(-tt / 0.0008)
+        click = _normalise(_filtered(click, lambda f: (f > 1200) / (1 + (f / 9000) ** 2)), 1.0)
+        metal = sum(a * np.sin(2 * np.pi * f * (0.97 + 0.03 * pitch) * tt + rng.uniform(0, 6.3)) * np.exp(-tt / d)
+                    for f, d, a in v["metal"])
+        wood = sum(a * np.sin(2 * np.pi * f * pitch * tt + rng.uniform(0, 6.3)) * np.exp(-tt / d)
+                   for f, d, a in v["wood"])
+        # the knock has a soft attack, a millisecond or so
+        wood *= np.minimum(1.0, tt / 0.0012)
+        dry[offset:] += level * (v["click"] * click + metal + wood)
 
     strike(0.0, 1.0)
-    strike(0.017, 0.35)  # the escape wheel's tooth landing
+    delay, level = v["drop"]
+    strike(delay, level)
+
+    # A little drive makes it dense and solid, like a close recording.
+    dry = np.tanh(v["drive"] * _normalise(dry, 1.0)) / np.tanh(v["drive"])
+    amount, length = v["room"]
+    wet = _convolve(dry, _room_impulse(length, 3))[: len(t)]
+    out = (1 - amount) * dry + amount * _normalise(wet, 1.0) * 0.8
     fade = np.ones_like(t)
-    fade[-2000:] = np.linspace(1, 0, 2000)
-    return _normalise(out * fade, 0.8)
+    fade[-3000:] = np.linspace(1, 0, 3000)
+    return _normalise(out * fade, 0.97)
 
 
 # --- the fire
@@ -217,10 +286,10 @@ def write_wav(path: Path, samples: np.ndarray) -> None:
 
 
 def render(name: str) -> np.ndarray:
-    if name == "tick":
-        return tick(False)
-    if name == "tock":
-        return tick(True)
+    if name.startswith(("tick", "tock")):
+        # "tick" / "tock", or with a voice: "tick_bold"
+        kind, _, voice = name.partition("_")
+        return tick(kind == "tock", voice or DEFAULT_VOICE)
     if name == "fire":
         return fire_loop()
     if name == "rain":
@@ -230,6 +299,15 @@ def render(name: str) -> np.ndarray:
     if name in chimes.all_keys():
         return chime(name)
     raise KeyError(name)
+
+
+def remove_stale(directory: Path) -> None:
+    """Delete sounds cached by older versions of the synthesiser."""
+    import shutil
+
+    for folder in directory.glob("v*"):
+        if folder.is_dir() and folder.name != f"v{SYNTH_VERSION}":
+            shutil.rmtree(folder, ignore_errors=True)
 
 
 def ensure_sound(name: str, directory: Path) -> Path:

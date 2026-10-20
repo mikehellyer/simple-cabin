@@ -9,7 +9,24 @@ def test_tick_and_tock_are_short_and_differ():
     tick, tock = synth.tick(False), synth.tick(True)
     assert len(tick) == len(tock) < synth.RATE
     assert not np.allclose(tick, tock)
-    assert np.max(np.abs(tick)) <= 0.81
+    assert np.max(np.abs(tick)) <= 0.98
+
+
+def test_each_clock_voice_sounds_different_and_solid():
+    ticks = {voice: synth.tick(False, voice) for voice in synth.VOICES}
+    names = list(ticks)
+    for i, a in enumerate(names):
+        for b in names[i + 1:]:
+            assert not np.allclose(ticks[a], ticks[b])
+    for voice, sound in ticks.items():
+        # plenty of energy in the first 150 ms (the old, thin tick had an RMS of ~0.09)
+        assert np.sqrt(np.mean(sound[: int(0.15 * synth.RATE)] ** 2)) > 0.2, voice
+        assert synth.VOICES[voice]["label"]
+
+
+def test_render_names_for_voices():
+    assert np.allclose(synth.render("tock_deep"), synth.tick(True, "deep"))
+    assert np.allclose(synth.render("tick"), synth.tick(False, synth.DEFAULT_VOICE))
 
 
 def test_fire_loop_joins_up_seamlessly():
@@ -31,5 +48,8 @@ def test_ensure_sound_writes_a_cached_wav(tmp_path):
     assert path.exists() and path.parent.name == f"v{synth.SYNTH_VERSION}"
     with wave.open(str(path)) as w:
         assert w.getframerate() == synth.RATE and w.getnchannels() == 1
+    (tmp_path / "v1").mkdir()
+    synth.remove_stale(tmp_path)
+    assert not (tmp_path / "v1").exists() and path.exists()
     mtime = path.stat().st_mtime_ns
     assert synth.ensure_sound("tick", tmp_path).stat().st_mtime_ns == mtime  # not remade

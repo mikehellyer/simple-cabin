@@ -28,6 +28,7 @@ class Settings:
     chime_volume: int = 75
     muted: bool = False
     quarter_chimes: bool = False
+    clock_voice: str = "classic"  # see synth.VOICES
 
     # Drift outside now and then, but spend most of the time indoors.
     auto_switch_views: bool = True
@@ -39,6 +40,7 @@ _CHOICES = {
     "location_mode": ("auto", "manual"),
     "temperature_unit": ("C", "F"),
     "wind_unit": ("mph", "kmh"),
+    "clock_voice": ("classic", "bold", "deep"),
 }
 _RANGES = {
     "master_volume": (0, 100),

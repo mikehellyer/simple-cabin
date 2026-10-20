@@ -31,6 +31,7 @@ class AudioEngine(QObject):
         self._rain = 0.0
         self._play_when_ready: Optional[str] = None
         self._next_second = 0
+        self._voice = synth.DEFAULT_VOICE
 
         self._tick_timer = QTimer(self)
         self._tick_timer.setTimerType(Qt.PreciseTimer)
@@ -40,8 +41,12 @@ class AudioEngine(QObject):
     # --- setup
 
     def start(self) -> None:
+        voice = self._voice
+
         def make_basics():
-            return {name: synth.ensure_sound(name, self._dir) for name in ("tick", "tock", "fire", "rain", "thunder")}
+            names = (f"tick_{voice}", f"tock_{voice}", "fire", "rain", "thunder")
+            synth.remove_stale(self._dir)
+            return {name: synth.ensure_sound(name, self._dir) for name in names}
 
         self._runner.run(make_basics, self._on_basics_ready, lambda error: print(f"sound synthesis failed: {error}"))
         self._schedule_next_second()
@@ -84,12 +89,21 @@ class AudioEngine(QObject):
         for effect in self._effects.values():
             effect.setMuted(muted)
 
+    def set_clock_voice(self, voice: str) -> None:
+        """Change how the clock ticks (makes the new sounds if need be)."""
+        if voice == self._voice:
+            return
+        self._voice = voice
+        if self._effects:  # started already: load the new pair now
+            self._prepare(f"tick_{voice}")
+            self._prepare(f"tock_{voice}")
+
     def set_quarter_chimes(self, enabled: bool) -> None:
         self._quarters = enabled
         self._prepare_upcoming_chime()
 
     def _level(self, name: str) -> float:
-        if name in ("tick", "tock"):
+        if name.startswith(("tick", "tock")):
             part = self._tick
         elif name == "fire":
             part = self._fire
@@ -144,7 +158,7 @@ class AudioEngine(QObject):
 
         # The pendulum (see clock.pendulum_angle) ends its swing on the
         # second: one side on even seconds, the other on odd.
-        effect = self._effects.get("tick" if second % 2 == 0 else "tock")
+        effect = self._effects.get(f"{'tick' if second % 2 == 0 else 'tock'}_{self._voice}")
         if effect is not None:
             effect.play()
 
