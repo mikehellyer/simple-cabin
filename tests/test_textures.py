@@ -1,6 +1,6 @@
 import pytest
 
-pytest.importorskip("PySide6.QtGui")
+pytest.importorskip("PySide6.QtGui", exc_type=ImportError)  # CI Linux has no libEGL
 
 from simple_cabin.gui import textures as tx
 
