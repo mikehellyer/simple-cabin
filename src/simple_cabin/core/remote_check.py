@@ -78,8 +78,20 @@ def check_tv() -> None:
         say("    (couldn't read /proc/bus/input/devices)")
     dev = next((d for d in devices if "f.f.f.f" not in _run([tool, "-d", str(d)])), devices[0])
     say()
+    from simple_cabin.core.tv_keys import ACTIONS, TvKeyReader
+
+    reader = TvKeyReader()
+    reading = reader.start()
     say(f"Now press some buttons on the TV remote (arrows, OK, back, the coloured ones) for 15 seconds…")
     monitor = _run([tool, "-d", str(dev), "-M"], 15)
+    keys = reader.take()
+    reader.stop()
+    say(f"Linux key presses from the remote: {', '.join(keys) or 'none'}")
+    if not reading:
+        say(f"  -> couldn't read the remote's input device: {'; '.join(reader.errors) or 'none found'}")
+    unknown = sorted({k for k in keys if k not in ACTIONS} - {"KEY_UP", "KEY_DOWN", "KEY_LEFT", "KEY_RIGHT"})
+    if unknown:
+        say(f"  (not used by Simple-Cabin yet: {', '.join(unknown)})")
     presses = re.findall(r"USER_CONTROL_PRESSED.*?(?:ui-cmd|ui_cmd)[^:]*:\s*([\w\- ]+)", monitor, re.S)
     received = len(re.findall(r"USER_CONTROL_PRESSED", monitor))
     say(f"button presses the TV sent: {received}")

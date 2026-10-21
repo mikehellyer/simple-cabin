@@ -40,9 +40,10 @@ app registers with the TV over HDMI, so the TV's own remote works:
 | Button | Does |
 | --- | --- |
 | ◀ ▶ | Inside / outside |
-| OK | Weather and clock screen |
-| Back | Back to the cabin |
-| ▲ ▼ | Next / previous weather preview |
+| OK or ▼ | Weather and clock screen (again to go back) |
+| Back / Exit | Back to the cabin |
+| ▲ | Next weather preview |
+| 1 / 2 / 3 / 0 | Inside / outside / weather screen / real weather |
 | Red | Mute |
 | Green | Ring the chime |
 | Yellow | Next time-of-day preview |
