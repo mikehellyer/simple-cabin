@@ -43,3 +43,26 @@ def test_buttons_map_to_cabin_actions():
     assert tv_keys.ACTIONS["KEY_OK"] == "weather_screen"
     assert tv_keys.ACTIONS["KEY_EXIT"] == "back"
     assert tv_keys.ACTIONS["KEY_BLUE"] == "phone_qr"
+
+
+def test_arrows_and_playback_buttons_are_read_directly_too():
+    a = tv_keys.ACTIONS
+    assert (a["KEY_LEFT"], a["KEY_RIGHT"], a["KEY_DOWN"], a["KEY_UP"]) == ("inside", "outside", "weather_screen", "weather_next")
+    assert a["KEY_PLAYPAUSE"] == "mute" and a["KEY_PREVIOUSSONG"] == "inside" and a["KEY_NEXTSONG"] == "outside"
+
+
+def test_registering_asks_the_tv_for_its_navigation_keys(monkeypatch):
+    from pathlib import Path
+    from simple_cabin.core import cec
+
+    ran = []
+
+    class Done:
+        returncode, stderr = 0, ""
+
+    monkeypatch.setattr(cec, "cec_devices", lambda: [Path("/dev/cec0")])
+    monkeypatch.setattr(cec.shutil, "which", lambda name: "/usr/bin/cec-ctl")
+    monkeypatch.setattr(cec.subprocess, "run", lambda args, **k: ran.append(args) or Done())
+    assert "menu announced" in cec.register_with_tv()
+    assert "--playback" in ran[0] and "--rc-src-dev-root" in ran[0]
+    assert ran[1][-2:] == ["--menu-status", "menu-state=activated"] and "--active-source" not in " ".join(ran[1])

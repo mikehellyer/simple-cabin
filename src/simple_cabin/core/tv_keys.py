@@ -34,9 +34,15 @@ KEY_NAMES = {
     **{512 + n: f"KEY_NUMERIC_{n}" for n in range(10)},
 }
 
-# What each button does in the cabin. The arrows and media keys aren't here:
-# they already reach the app through the desktop.
+# What each button does in the cabin. The arrows and media keys reach the app
+# through the desktop too, but only while its window has the keyboard focus,
+# so they're read here as well (a press arriving both ways counts once).
+# Many TVs only pass on the playback buttons, so those can work the cabin too.
 ACTIONS = {
+    "KEY_LEFT": "inside", "KEY_RIGHT": "outside", "KEY_DOWN": "weather_screen", "KEY_UP": "weather_next",
+    "KEY_ENTER": "weather_screen", "KEY_KPENTER": "weather_screen",
+    "KEY_PLAYPAUSE": "mute", "KEY_PAUSE": "mute", "KEY_PLAY": "mute", "KEY_STOP": "back",
+    "KEY_PREVIOUSSONG": "inside", "KEY_REWIND": "inside", "KEY_NEXTSONG": "outside", "KEY_FASTFORWARD": "outside",
     "KEY_OK": "weather_screen", "KEY_SELECT": "weather_screen", "KEY_INFO": "weather_screen", "KEY_EPG": "weather_screen",
     "KEY_EXIT": "back", "KEY_BACK": "back",
     "KEY_RED": "mute", "KEY_GREEN": "chime", "KEY_YELLOW": "time", "KEY_BLUE": "phone_qr",

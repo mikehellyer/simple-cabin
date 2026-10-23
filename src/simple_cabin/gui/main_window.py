@@ -63,6 +63,7 @@ class MainWindow(QMainWindow):
         self._cec_timer.timeout.connect(self._register_tv_remote)
         self._last_action: dict[str, float] = {}
         self._tv_keys: Optional[TvKeyReader] = None
+        self._unused_tv_keys: set[str] = set()
         self._tv_key_timer = QTimer(self)
         self._tv_key_timer.timeout.connect(self._poll_tv_keys)
         self._pending_update = None
@@ -139,7 +140,8 @@ class MainWindow(QMainWindow):
                                       lambda: self._once("mute", self._toggle_mute), checkable=True)
         self._act_chime = self._action("Ring the hour chime now", ["C", k.Key_Green],
                                        lambda: self._once("chime", self._audio.play_hour_chime_now))
-        self._act_preview_weather = self._action("Preview another weather", ["P", k.Key_Up], lambda: self._cycle_weather_preview(1))
+        self._act_preview_weather = self._action("Preview another weather", ["P", k.Key_Up],
+                                                 lambda: self._once("weather_next", lambda: self._cycle_weather_preview(1)))
         self._act_preview_time = self._action("Preview another time of day", ["T", k.Key_Yellow],
                                               lambda: self._once("time", self._cycle_time_preview))
         self._act_phone = self._action("Show the phone remote's QR code", ["Q", k.Key_Blue],
@@ -172,6 +174,11 @@ class MainWindow(QMainWindow):
             self.showFullScreen()
         else:
             self.show()
+        # take the keyboard focus, so keys from a keyboard (or a TV remote,
+        # through the desktop) come here straight away
+        self.raise_()
+        self.activateWindow()
+        self._stage.setFocus()
         self._act_full.setChecked(self.isFullScreen())
 
     def _toggle_full_screen(self) -> None:
@@ -282,6 +289,9 @@ class MainWindow(QMainWindow):
         for key in self._tv_keys.take():
             action = TV_KEY_ACTIONS.get(key)
             if action is None:
+                if key not in self._unused_tv_keys:  # (logged once each, to see what a TV sends)
+                    self._unused_tv_keys.add(key)
+                    log_event(f"TV remote button with nothing to do: {key}")
                 continue
             {
                 "weather_screen": lambda: self._once("weather_screen", self._stage.toggle_weather),

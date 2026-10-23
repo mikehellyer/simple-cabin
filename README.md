@@ -48,6 +48,13 @@ app registers with the TV over HDMI, so the TV's own remote works:
 | Green | Ring the chime |
 | Yellow | Next time-of-day preview |
 | Blue | Show the phone remote's QR code |
+| Play / pause | Mute |
+| ⏮ ◀◀ / ⏭ ▶▶ | Inside / outside |
+| Stop | Back to the cabin |
+
+Some TVs only pass on the playback buttons, so those can work the cabin
+too. The cabin also tells the TV it has menus (so the TV sends the arrows
+and OK as well), without switching the TV over to it.
 
 Needs `cec-ctl` (package `v4l-utils`, installed with the .deb) and a TV with
 HDMI-CEC switched on (Samsung "Anynet+", LG "SimpLink", Sony "Bravia Sync",
